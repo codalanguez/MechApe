@@ -311,7 +311,7 @@ Tools work with **both** backends — local models and remote OpenRouter ones. T
 
 Practical notes: tools need a model trained for tool-calling — one that isn't just answers in prose and no tools run. On OpenRouter, a model with no tool support is detected and the turn falls back to a plain answer rather than erroring. Tool resolution happens before the answer streams, so a turn that calls tools pauses briefly before text appears. A server that fails to start is logged and skipped rather than breaking the chat.
 
-To check the remote path against a live key: `MECHAPE_OPENROUTER_KEY=sk-or-... node scripts/verify-openrouter-tools.js`. It costs a fraction of a cent and is not part of `npm test`, which never touches the network.
+The remote path is verified end-to-end against `openai/gpt-4o-mini` (tool requested, arguments parsed, result fed back, answer demonstrably used it) and against `meta-llama/llama-3.2-1b-instruct` for the no-tool-support fallback. To re-check after changing it, set `MECHAPE_OPENROUTER_KEY` in your environment and run `node scripts/verify-openrouter-tools.js` — set the variable in its own step rather than inline, so the key stays out of shell history. It costs a fraction of a cent and is not part of `npm test`, which never touches the network.
 
 ## Configuration
 

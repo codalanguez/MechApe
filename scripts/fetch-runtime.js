@@ -141,13 +141,47 @@ async function fetchVariant({ variant, asset, arch }) {
   await run(tarBin(), ['-xf', tmp, '-C', staging]);
   fs.rmSync(tmp, { force: true });
 
-  if (!fs.existsSync(path.join(staging, exe))) {
-    throw new Error(`${asset} did not contain ${exe}`);
-  }
+  // The Windows zips are flat; the macOS and Linux tarballs put everything
+  // under a "llama-<tag>/" directory. Rather than special-casing per
+  // platform — which is how this silently only ever worked on Windows —
+  // find the server wherever it landed and lift its folder to the top.
+  const root = findBinaryRoot(staging, exe);
+  if (!root) throw new Error(`${asset} did not contain ${exe}`);
+  if (root !== staging) liftInto(root, staging);
+
   trimToServer(staging, exe);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(staging, dir);
   console.log(`    unpacked -> ${path.relative(process.cwd(), dir)}`);
+}
+
+/**
+ * Locate the directory holding the server binary.
+ *
+ * Only two levels deep: every llama.cpp release archive is either flat or
+ * one directory down, and an unbounded walk over a freshly-extracted archive
+ * is a good way to turn a packaging bug into a very slow build.
+ */
+function findBinaryRoot(dir, exe, depth = 0) {
+  if (fs.existsSync(path.join(dir, exe))) return dir;
+  if (depth >= 2) return null;
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    let st;
+    try { st = fs.statSync(p); } catch { continue; }
+    if (!st.isDirectory()) continue;
+    const found = findBinaryRoot(p, exe, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Move everything in `src` up into `dst`, then remove the empty shell. */
+function liftInto(src, dst) {
+  for (const name of fs.readdirSync(src)) {
+    fs.renameSync(path.join(src, name), path.join(dst, name));
+  }
+  fs.rmSync(src, { recursive: true, force: true });
 }
 
 /**

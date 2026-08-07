@@ -19,6 +19,8 @@ const { pipeNdjson } = require('../lib/stream');
 const llamacpp = require('../lib/llamacpp');
 const openrouter = require('../lib/openrouter');
 const { embedStatus, isEmbedName, indexStatusFor } = require('../lib/retrieval');
+const mcp = require('../lib/mcp');
+const tools = require('../lib/tools');
 const pkg = require('../package.json');
 
 const router = express.Router();
@@ -267,7 +269,7 @@ router.post('/chat', async (req, res) => {
     });
   }
 
-  const messages = [{ role: 'system', content: system }, ...history];
+  let messages = [{ role: 'system', content: system }, ...history];
 
   const ac = new AbortController();
   // fires when the client disconnects mid-stream (req 'close' fires too early in modern Node)
@@ -275,6 +277,28 @@ router.post('/chat', async (req, res) => {
 
   // options come from the project's model settings
   const clean = sanitizeOptions(options);
+
+  /* MCP tools, if any integrations are configured. This runs before the
+   * streaming call and rewrites `messages` to include whatever the tools
+   * returned — see lib/tools.js for why it is a pre-pass rather than inline.
+   *
+   * Local models only for now: tool calling here is llama-server's extension
+   * to the OpenAI schema, and routing a tool loop through OpenRouter means
+   * per-provider quirks this hasn't been tested against. A remote chat
+   * simply gets no tools rather than a half-working approximation.
+   *
+   * Never fatal: resolveTools returns the original messages on any failure,
+   * so a broken integration downgrades the turn to an ordinary chat. */
+  let toolsUsed = [];
+  if (!remote) {
+    try {
+      const resolved = await tools.resolveTools({ model, messages, signal: ac.signal });
+      messages = resolved.messages;
+      toolsUsed = resolved.used;
+    } catch (e) {
+      logError(`chat "${model}" — tool resolution failed`, e);
+    }
+  }
 
   let upstream;
   try {
@@ -325,6 +349,12 @@ router.post('/chat', async (req, res) => {
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
 
+  /* Tell the UI which tools ran before the answer starts arriving, so a
+   * reply that leaned on an integration says so instead of appearing to
+   * know things by magic. Same NDJSON channel as everything else; the
+   * frontend ignores fields it doesn't recognise. */
+  if (toolsUsed.length) res.write(`${JSON.stringify({ tools: toolsUsed })}\n`);
+
   let acc = '';
   let accThink = '';
   let usage = null;
@@ -354,6 +384,33 @@ router.post('/chat', async (req, res) => {
     } catch { /* project deleted mid-stream */ }
   }
   res.end();
+});
+
+/* ---- MCP integrations ----
+ * The config file is the source of truth and the user edits it directly
+ * (same as Claude Desktop). These endpoints only read and reconnect — there
+ * is deliberately no API for *writing* server definitions, because that
+ * would turn "a page in the app" into a way to make MechApe run an arbitrary
+ * executable. Editing the file is a conscious act; a POST is not. */
+
+router.get('/integrations', (req, res) => {
+  res.json({
+    configPath: require('../lib/config').MCP_CONFIG,
+    configured: mcp.isConfigured(),
+    servers: mcp.status(),
+  });
+});
+
+/** Re-read the config and reconnect — after editing the file by hand. */
+router.post('/integrations/reload', async (req, res) => {
+  try {
+    mcp.stopAll();
+    const { failures } = await mcp.startAll();
+    res.json({ ok: true, servers: mcp.status(), failures });
+  } catch (e) {
+    logError('mcp reload', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

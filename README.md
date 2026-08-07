@@ -265,6 +265,31 @@ The trust model is explicit, not fine print:
 - Retrieval embeddings stay **local-only**: large attachments are indexed on-device via MechApe's own embed instance even when the chat model is remote.
 - The API key is stored OS-encrypted (DPAPI via Electron `safeStorage`), is only handed to the local server process, and never reaches the browser UI.
 
+## Integrations (MCP)
+
+Skills tell a model *how* to work. [MCP](https://modelcontextprotocol.io/) servers give it things it can actually **do** — read a folder, query a database, search a wiki. MechApe is an MCP host, and it uses **Claude Desktop's config format**, so a server you already configured there pastes across unchanged.
+
+There is no config file until you write one. Create `mcp.json` beside your data folder (`%APPDATA%\MechApe\data\mcp.json` on Windows, `~/Library/Application Support/MechApe/data/mcp.json` on macOS, `~/.config/MechApe/data/mcp.json` on Linux):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\notes"]
+    }
+  }
+}
+```
+
+Then reload: `POST /api/integrations/reload`, or restart the app. `GET /api/integrations` lists what's connected and which tools each server exposes. [`sample-mcp-servers.json`](sample-mcp-servers.json) has a few real ones to start from, all disabled — flip `"disabled": false` on the ones you want. More at [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers).
+
+MechApe adds one key to the format: `"disabled": true` keeps a server defined but doesn't start it.
+
+> **This is the one place the local-only promise stops.** An MCP server is a program *you* choose to run, and it can do whatever that program does — including talk to the network. Nothing ships with MechApe, nothing installs itself, and nothing runs until you write that file. Every tool call is logged, and a reply that used one says which. Read a server before you connect it, exactly as you would any other executable.
+
+Practical notes: tools need a model trained for tool-calling — one that isn't simply answers in prose and no tools run. Tool resolution happens before the answer streams, so a turn that calls tools pauses briefly before text appears. Remote (OpenRouter) chats don't get tools; that's local-only for now. A server that fails to start is logged and skipped rather than breaking the chat.
+
 ## Configuration
 
 | Env var | Default | Purpose |

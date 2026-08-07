@@ -289,22 +289,29 @@ router.post('/chat', async (req, res) => {
    * streaming call and rewrites `messages` to include whatever the tools
    * returned — see lib/tools.js for why it is a pre-pass rather than inline.
    *
-   * Local models only for now: tool calling here is llama-server's extension
-   * to the OpenAI schema, and routing a tool loop through OpenRouter means
-   * per-provider quirks this hasn't been tested against. A remote chat
-   * simply gets no tools rather than a half-working approximation.
+   * Both backends: the adapter is handed in, so a remote chat gets tools too.
+   * Unlike cross-chat memory — which is withheld from remote models because
+   * it is distilled from *other* conversations — tool results belong to this
+   * one, and the user already accepted that this conversation goes to the
+   * provider. Note what that means in practice though: a tool that reads
+   * local files sends those file contents to the provider, which is why the
+   * README says so plainly next to the integration docs.
    *
    * Never fatal: resolveTools returns the original messages on any failure,
    * so a broken integration downgrades the turn to an ordinary chat. */
   let toolsUsed = [];
-  if (!remote) {
-    try {
-      const resolved = await tools.resolveTools({ model, messages, signal: ac.signal });
-      messages = resolved.messages;
-      toolsUsed = resolved.used;
-    } catch (e) {
-      logError(`chat "${model}" — tool resolution failed`, e);
-    }
+  try {
+    const resolved = await tools.resolveTools({
+      model,
+      messages,
+      options: clean,
+      signal: ac.signal,
+      chatWithTools: remote ? openrouter.chatWithTools : llamacpp.chatWithTools,
+    });
+    messages = resolved.messages;
+    toolsUsed = resolved.used;
+  } catch (e) {
+    logError(`chat "${model}" — tool resolution failed`, e);
   }
 
   let upstream;

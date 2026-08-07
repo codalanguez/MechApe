@@ -305,7 +305,13 @@ MechApe adds one key to the format: `"disabled": true` keeps a server defined bu
 
 > **This is the one place the local-only promise stops.** An MCP server is a program *you* choose to run, and it can do whatever that program does — including talk to the network. Nothing ships with MechApe, nothing installs itself, and nothing runs until you write that file. Every tool call is logged, and a reply that used one says which. Read a server before you connect it, exactly as you would any other executable.
 
-Practical notes: tools need a model trained for tool-calling — one that isn't simply answers in prose and no tools run. Tool resolution happens before the answer streams, so a turn that calls tools pauses briefly before text appears. Remote (OpenRouter) chats don't get tools; that's local-only for now. A server that fails to start is logged and skipped rather than breaking the chat.
+Tools work with **both** backends — local models and remote OpenRouter ones. That's a deliberate difference from [memory](#memory), which is withheld from remote chats: memory is distilled from *other* conversations, while tool results belong to this one, and you already accepted that this conversation goes to the provider when you picked a remote model.
+
+> **But be concrete about what that means.** If you connect a filesystem server and then ask a *remote* model about your files, the file contents are sent to the provider as tool results. Same for anything else a tool returns. The provider sees whatever the tool read. If that's not what you want, use a local model for chats that touch local tools — the reply badges which backend answered, so you can always tell.
+
+Practical notes: tools need a model trained for tool-calling — one that isn't just answers in prose and no tools run. On OpenRouter, a model with no tool support is detected and the turn falls back to a plain answer rather than erroring. Tool resolution happens before the answer streams, so a turn that calls tools pauses briefly before text appears. A server that fails to start is logged and skipped rather than breaking the chat.
+
+To check the remote path against a live key: `MECHAPE_OPENROUTER_KEY=sk-or-... node scripts/verify-openrouter-tools.js`. It costs a fraction of a cent and is not part of `npm test`, which never touches the network.
 
 ## Configuration
 

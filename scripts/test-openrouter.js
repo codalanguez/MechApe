@@ -8,7 +8,7 @@
  * API. Exits non-zero on any failure.
  */
 const assert = require('assert');
-const { buildChatPayload, sseToNdjson } = require('../lib/openrouter');
+const { buildChatPayload, sseToNdjson, looksLikeNoToolSupport } = require('../lib/openrouter');
 
 /* Tests queue here and run sequentially at the bottom of the file, so the
  * output order matches the declaration order. */
@@ -104,6 +104,37 @@ test('stream: a newline-less oversized line fails loudly instead of buffering fo
 test('stream: a usage chunk without total_tokens emits no usage event', async () => {
   const events = await collect(['data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":5}}\n\ndata: [DONE]\n\n']);
   assert.deepStrictEqual(events, [{ done: true }]);
+});
+
+/* ---- tool calling ---- */
+
+test('looksLikeNoToolSupport: a model that cannot call tools is a fallback, not an error', () => {
+  // OpenRouter's status for this varies by provider, so it is matched on the
+  // message. Getting it wrong in the permissive direction would swallow real
+  // errors; in the strict direction it just errors at someone who asked a
+  // question, which is why the pattern is narrow and the status list short.
+  assert.strictEqual(looksLikeNoToolSupport(404, '{"error":{"message":"No endpoints found that support tool use"}}'), true);
+  assert.strictEqual(looksLikeNoToolSupport(400, 'model does not support function calling'), true);
+  assert.strictEqual(looksLikeNoToolSupport(422, 'tool_choice is not supported'), true);
+});
+
+test('looksLikeNoToolSupport: real failures still surface', () => {
+  assert.strictEqual(looksLikeNoToolSupport(401, 'invalid api key'), false, 'a bad key must not look like a tool problem');
+  assert.strictEqual(looksLikeNoToolSupport(402, 'insufficient credits'), false);
+  assert.strictEqual(looksLikeNoToolSupport(500, 'upstream tool error'), false, 'a 500 is an outage, not a capability');
+  assert.strictEqual(looksLikeNoToolSupport(400, 'context length exceeded'), false);
+});
+
+test('a tool pre-pass keeps the privacy routing of the streamed turn', () => {
+  // The pre-pass must not be routed under looser rules than the chat it
+  // precedes: a data_collection=deny conversation stays deny throughout.
+  const p = buildChatPayload({
+    model: 'openrouter:anthropic/claude-sonnet-4',
+    messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+    options: { or_route: 'floor' },
+  });
+  assert.strictEqual(p.provider.data_collection, 'deny');
+  assert.ok(p.model.endsWith(':floor'), 'routing variant should survive into the tool turn');
 });
 
 (async () => {

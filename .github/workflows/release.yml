@@ -15,28 +15,32 @@
 # be shipped *unsigned* inside the signed package. Almost nothing in this
 # package qualifies as ours:
 #
-#   MechApe.exe            our build's Electron host        -> signed
-#   the NSIS installer     produced by our build            -> signed
+#   MechApe.exe            our build's Electron host         -> signed
+#   the NSIS installer     produced by our build             -> signed
 #   resources/runtime/**   llama.cpp, verbatim from ggml-org -> NOT ours
 #   ffmpeg.dll, libGLESv2.dll, vk_swiftshader.dll, …
 #                          Chromium/Electron upstream        -> NOT ours
 #   resources/app/**       our code, but it is JavaScript — nothing to sign
 #
-# So the two passes below name those two files explicitly. An earlier
-# revision globbed **/*.exe;**/*.dll over the whole unpacked tree, which
-# would have signed the entire llama.cpp runtime — precisely what the policy
-# forbids.
+# An earlier revision globbed **/*.exe;**/*.dll over the whole unpacked
+# tree, which would have signed the entire llama.cpp runtime — precisely
+# what the policy forbids.
 #
 # Note what this does NOT fix: llama-server.exe is the binary antivirus
-# actually quarantines (Avast took it twice during development), and it is
-# upstream, so it ships unsigned and stays exposed. Signing removes the
-# SmartScreen warning on the installer and on the app itself. The real fix
-# for the runtime is upstream signing — see docs/SIGNING.md.
+# actually quarantines, and it is upstream, so it ships unsigned and stays
+# exposed. Signing removes the SmartScreen warning on the installer and on
+# the app itself. The real fix for the runtime is upstream signing.
+#
+# Only Windows is signed. macOS needs an Apple Developer ID (not a SignPath
+# concern) and Linux AppImages are not code-signed at all, so those two
+# publish unsigned and say so.
 #
 # Until the SignPath application is approved, SIGNPATH_API_TOKEN will not
 # exist and both passes are skipped: the workflow still builds and still
 # publishes, just unsigned and labelled as such. That keeps releases
-# possible while the application is pending.
+# possible while the application is pending — which matters, because their
+# conditions require a project already be released before they will
+# consider it.
 
 name: Release
 
@@ -60,11 +64,24 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
 jobs:
-  release:
-    runs-on: windows-latest
+  build:
+    strategy:
+      # One platform failing should not deny us the other two — a broken mac
+      # build is not a reason to lose a working Windows installer.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
     # Generous because SignPath requires a human to approve each signing
-    # request, and this job waits on two of them. The build itself takes
-    # under five minutes; the rest is waiting for someone to click approve.
+    # request, and the Windows leg waits on two of them. The build itself
+    # takes under five minutes.
     timeout-minutes: 180
 
     steps:
@@ -78,7 +95,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
+      # Run on every platform, not just one: lint and the adapter tests cover
+      # path handling, which is exactly where the three diverge.
+      - name: Lint and test
         run: npm test
 
       - name: Check the tag matches package.json
@@ -93,15 +112,29 @@ jobs:
           fi
           echo "version $pkg"
 
-      # Downloads the pinned llama.cpp builds and verifies each against the
-      # SHA256 digest GitHub reports for the asset. See scripts/fetch-runtime.js.
+      # Downloads the pinned llama.cpp builds for THIS platform and verifies
+      # each against the SHA256 digest GitHub reports for the asset.
+      # scripts/fetch-runtime.js picks the right set from process.platform.
       - name: Fetch and verify the llama.cpp runtime
         run: npm run runtime
+
+      # ---- macOS and Linux: one build, no signing ----
+
+      - name: Build (macOS)
+        if: matrix.platform == 'mac'
+        run: npx electron-builder --mac --publish never
+
+      - name: Build (Linux)
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux --publish never
+
+      # ---- Windows: unpacked app, sign, then package ----
 
       # Stage 1 — unpacked app only. buildDate is baked in here because
       # extraMetadata rewrites the packaged package.json, which stage 2
       # (--prepackaged) no longer touches.
-      - name: Build the unpacked app
+      - name: Build the unpacked app (Windows)
+        if: matrix.platform == 'win'
         shell: bash
         run: npx electron-builder --win --dir -c.extraMetadata.buildDate=$(date -u +%Y-%m-%d)
 
@@ -110,6 +143,7 @@ jobs:
       # before the shell ever sees it, which puts the value in the process
       # arguments. Masking hides it from the log, not from the process table.
       - name: Detect whether signing is configured
+        if: matrix.platform == 'win'
         id: signing
         shell: bash
         env:
@@ -128,7 +162,7 @@ jobs:
       # one file we may sign makes that impossible to get wrong by accident.
 
       - name: Upload the app executable for SignPath
-        if: steps.signing.outputs.enabled == 'true'
+        if: matrix.platform == 'win' && steps.signing.outputs.enabled == 'true'
         id: upload-app
         uses: actions/upload-artifact@v4
         with:
@@ -137,7 +171,7 @@ jobs:
           retention-days: 1
 
       - name: Sign the app executable
-        if: steps.signing.outputs.enabled == 'true'
+        if: matrix.platform == 'win' && steps.signing.outputs.enabled == 'true'
         uses: SignPath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -154,7 +188,7 @@ jobs:
       # Put the signed executable back before the installer is built, so the
       # installer packages the signed copy.
       - name: Replace the executable with its signed copy
-        if: steps.signing.outputs.enabled == 'true'
+        if: matrix.platform == 'win' && steps.signing.outputs.enabled == 'true'
         shell: pwsh
         run: |
           $signed = Get-ChildItem signed-app -Recurse -Filter MechApe.exe | Select-Object -First 1
@@ -167,12 +201,12 @@ jobs:
           "MechApe.exe: $($sig.Status) — $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') { throw "MechApe.exe is not validly signed: $($sig.Status)" }
 
-      # ---- stage 2: the installer, built from whatever is now on disk ----
-
-      - name: Build the installer
+      - name: Build the installer (Windows)
+        if: matrix.platform == 'win'
         run: npx electron-builder --win nsis --prepackaged dist/win-unpacked
 
       - name: Find the installer
+        if: matrix.platform == 'win'
         id: installer
         shell: bash
         run: echo "path=$(ls dist/*.exe | head -1)" >> "$GITHUB_OUTPUT"
@@ -180,7 +214,7 @@ jobs:
       # ---- pass 2: sign the installer itself ----
 
       - name: Upload installer for SignPath
-        if: steps.signing.outputs.enabled == 'true'
+        if: matrix.platform == 'win' && steps.signing.outputs.enabled == 'true'
         id: upload-installer
         uses: actions/upload-artifact@v4
         with:
@@ -189,7 +223,7 @@ jobs:
           retention-days: 1
 
       - name: Sign the installer
-        if: steps.signing.outputs.enabled == 'true'
+        if: matrix.platform == 'win' && steps.signing.outputs.enabled == 'true'
         uses: SignPath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -201,37 +235,65 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed-installer
 
-      - name: Collect the artifact to publish
-        id: final
+      # ---- collect this platform's shippable files ----
+
+      - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p out
-          if [ "${{ steps.signing.outputs.enabled }}" = "true" ]; then
-            cp signed-installer/*.exe out/
-          else
-            cp "${{ steps.installer.outputs.path }}" out/
-          fi
-          echo "path=$(ls out/*.exe | head -1)" >> "$GITHUB_OUTPUT"
-
-      # SHA256 lets people verify the download independently of the signature.
-      - name: Checksum
-        shell: bash
-        run: |
-          cd out
-          sha256sum *.exe | tee SHA256SUMS.txt
+          case "${{ matrix.platform }}" in
+            win)
+              if [ "${{ steps.signing.outputs.enabled }}" = "true" ]; then
+                cp signed-installer/*.exe out/
+              else
+                cp "${{ steps.installer.outputs.path }}" out/
+              fi
+              ;;
+            mac)   cp dist/*.dmg dist/*.zip out/ ;;
+            linux) cp dist/*.AppImage out/ ;;
+          esac
+          ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mechape-installer
+          name: mechape-${{ matrix.platform }}
           path: out/*
+          retention-days: 7
 
-      # Drafted rather than published outright, so the installer can be
-      # smoke-tested on a real machine before anyone can download it.
+  # A single job publishes, after every platform has built. Letting each
+  # matrix leg create the release itself races: three runners would try to
+  # create the same tag's release at once.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every platform's artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mechape-*
+          path: staging
+          merge-multiple: true
+
+      # SHA256 lets people verify a download independently of any signature —
+      # which matters most for the platforms that have none.
+      - name: Checksum
+        run: |
+          cd staging
+          sha256sum * | tee SHA256SUMS.txt
+          ls -la
+
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*
+          files: staging/*
           draft: true
           generate_release_notes: true
-          body: ${{ steps.signing.outputs.enabled == 'true' && 'Signed by SignPath Foundation. Verify with `Get-AuthenticodeSignature <installer>.exe`, or check the download against SHA256SUMS.txt.' || '**This build is unsigned** — SignPath is not configured yet, so Windows SmartScreen will warn on launch. Check the download against SHA256SUMS.txt.' }}
+          body: |
+            Verify any download against `SHA256SUMS.txt`.
+
+            **Windows** — signed by SignPath Foundation once the application clears; until then the installer is unsigned and SmartScreen will warn on first launch.
+            **macOS** — unsigned (no Apple Developer ID). Gatekeeper will block the first launch: right-click the app → **Open**, or allow it under System Settings → Privacy & Security.
+            **Linux** — AppImage, `chmod +x` and run.
+
+            The bundled llama.cpp runtime is upstream and ships unsigned on every platform, by SignPath Foundation policy. See [docs/SIGNING.md](https://github.com/codalanguez/MechApe/blob/main/docs/SIGNING.md).

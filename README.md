@@ -1,4 +1,14 @@
-# 🐒 MechApe
+# 🦍 MechApe
+
+[![Release](https://img.shields.io/github/v/release/codalanguez/MechApe?include_prereleases&label=release&color=3FCFB8)](https://github.com/codalanguez/MechApe/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/codalanguez/MechApe/total?color=C9A227)](https://github.com/codalanguez/MechApe/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/codalanguez/MechApe/release.yml?branch=main&label=build)](https://github.com/codalanguez/MechApe/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/codalanguez/MechApe?color=E83A6F)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+
+**[⬇ Download the latest release](https://github.com/codalanguez/MechApe/releases/latest)** — Windows installer, macOS `.dmg`, Linux `.AppImage`.
+
+> Early days: releases are unsigned until the [SignPath Foundation](https://signpath.org/) application clears, so Windows SmartScreen will warn on first launch. Verify the download against the `SHA256SUMS.txt` published with each release.
 
 A local, private LLM studio on its own [llama.cpp](https://github.com/ggml-org/llama.cpp) backend — projects, Claude-style skills, and live file knowledge. No separate Ollama install and nothing to fetch on first launch: the `llama-server` runtime ships inside the installer, SHA256-verified at build time, and runs your models — plain `.gguf` files you pull straight from Hugging Face — directly. Local by default: out of the box, nothing ever leaves your machine except a model you asked for. When your hardware can't carry the model you need, an **optional** [OpenRouter](https://openrouter.ai) key adds remote models — per chat, clearly badged, never implicit.
 

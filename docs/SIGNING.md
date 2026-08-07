@@ -195,7 +195,7 @@ application can succeed at all.
 ## Verifying a signature
 
 ```powershell
-Get-AuthenticodeSignature 'MechApe Setup 1.11.2.exe' | Format-List Status, SignerCertificate
+Get-AuthenticodeSignature '.\MechApe Setup *.exe' | Format-List Status, SignerCertificate
 ```
 
 `Status` must be `Valid`. The workflow already asserts this for `MechApe.exe`

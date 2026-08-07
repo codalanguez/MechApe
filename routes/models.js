@@ -21,6 +21,7 @@ const openrouter = require('../lib/openrouter');
 const { embedStatus, isEmbedName, indexStatusFor } = require('../lib/retrieval');
 const mcp = require('../lib/mcp');
 const tools = require('../lib/tools');
+const memory = require('../lib/memory');
 const pkg = require('../package.json');
 
 const router = express.Router();
@@ -382,8 +383,47 @@ router.post('/chat', async (req, res) => {
         saveProject(fresh);
       }
     } catch { /* project deleted mid-stream */ }
+
+    /* Cross-chat memory, deliberately after the answer is saved and not
+     * awaited: extraction is a second model call, and the user should never
+     * wait on it to see their reply. Local models only — sending a
+     * conversation to a remote provider purely to build a profile is exactly
+     * the trade this app exists to refuse. Errors are swallowed inside
+     * remember(); this catch is for the promise itself. */
+    if (!remote) {
+      memory.remember({
+        userMessage: message,
+        assistantMessage: acc,
+        model,
+        chatOnce: llamacpp.chatOnce,
+      }).catch(() => { /* never surfaces to the chat */ });
+    }
   }
   res.end();
+});
+
+/* ---- cross-chat memory ----
+ * Read and delete. There is no endpoint to *write* a memory: facts come
+ * from conversations, and a write API would just be a second, unaudited way
+ * for something to put words in the user's mouth. */
+
+router.get('/memory', (req, res) => {
+  const cfg = require('../lib/config');
+  res.json({
+    enabled: cfg.MEMORY_ENABLED,
+    file: cfg.MEMORY_FILE,
+    max: cfg.MEMORY_MAX,
+    facts: memory.list().slice().reverse(),   // newest first, as a reader expects
+  });
+});
+
+router.delete('/memory/:id', (req, res) => {
+  res.json({ ok: memory.remove(req.params.id) });
+});
+
+router.delete('/memory', (req, res) => {
+  memory.clear();
+  res.json({ ok: true });
 });
 
 /* ---- MCP integrations ----

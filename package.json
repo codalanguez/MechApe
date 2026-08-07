@@ -10,7 +10,7 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "test": "eslint . && node scripts/test-openrouter.js && node scripts/test-llamacpp.js && node scripts/test-mcp.js",
+    "test": "eslint . && node scripts/test-openrouter.js && node scripts/test-llamacpp.js && node scripts/test-mcp.js && node scripts/test-memory.js",
     "desktop": "electron .",
     "bench": "node scripts/benchmark.js",
     "runtime": "node scripts/fetch-runtime.js",

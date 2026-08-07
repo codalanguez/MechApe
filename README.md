@@ -265,6 +265,23 @@ The trust model is explicit, not fine print:
 - Retrieval embeddings stay **local-only**: large attachments are indexed on-device via MechApe's own embed instance even when the chat model is remote.
 - The API key is stored OS-encrypted (DPAPI via Electron `safeStorage`), is only handed to the local server process, and never reaches the browser UI.
 
+## Memory
+
+Projects give a conversation its own knowledge. Memory is the layer above: the handful of things worth knowing in *any* chat — that you write dark fiction, that your prose runs long, that you're on Windows — so you stop re-explaining yourself in every new chat.
+
+After a reply, MechApe asks the local model whether the exchange contained anything **durable** — stable preferences, ongoing projects, how you like to work — and files what it finds as a short sentence. Task-specific detail, passing moods, and inferences are explicitly excluded. Most turns produce nothing, which is the intended outcome.
+
+What keeps this a notebook rather than surveillance:
+
+- **It never leaves the machine.** Extraction runs on your local model; remote chats are skipped entirely. Sending a conversation to a provider purely to build a profile is the trade this app exists to refuse.
+- **You can read it.** `GET /api/memory` returns every fact verbatim, in plain sentences — not embeddings you can't audit.
+- **You can delete it**, one fact or all of them, and deletion is real.
+- **It's bounded and dated** — 200 facts, oldest aged out — so it can't quietly grow forever.
+- **It's framed as background.** A memory that contradicts what you say now loses to you.
+- **`MECHAPE_MEMORY=off` genuinely turns it off** — nothing extracted, nothing injected, and the model isn't called. There's a test asserting exactly that, because a privacy switch that doesn't switch anything is worse than none.
+
+Extraction is a second model call, so it runs *after* your answer is saved and is never awaited — it costs you no waiting, just some idle GPU.
+
 ## Integrations (MCP)
 
 Skills tell a model *how* to work. [MCP](https://modelcontextprotocol.io/) servers give it things it can actually **do** — read a folder, query a database, search a wiki. MechApe is an MCP host, and it uses **Claude Desktop's config format**, so a server you already configured there pastes across unchanged.

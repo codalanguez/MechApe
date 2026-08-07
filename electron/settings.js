@@ -79,8 +79,13 @@ function fsRootsSetting() { return loadSettings().fsRoots; }
 
 /** Effective allowed folders. An empty array means the whole disk (no fence). */
 function fsRootsList() {
-  const env = env('FS_ROOTS');
-  if (env !== undefined) return env.split(';').map(s => s.trim()).filter(Boolean);
+  // NB: don't name this `env` — a local `const env` shadows the env() helper
+  // above for the whole function body, so the call initialising it lands in
+  // its own temporal dead zone and throws "Cannot access 'env' before
+  // initialization". That shipped once: it killed the forked server on every
+  // launch of the packaged app, which then hung on the splash screen forever.
+  const raw = env('FS_ROOTS');
+  if (raw !== undefined) return raw.split(';').map(s => s.trim()).filter(Boolean);
   const s = fsRootsSetting();
   if (s === 'all') return [];
   if (Array.isArray(s) && s.length) return s;

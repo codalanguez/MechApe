@@ -1,26 +1,37 @@
 # Build and code-sign a MechApe release.
 #
 # Signing is done by SignPath Foundation, which gives OSS projects a free
-# code-signing certificate. The whole reason this exists is documented in
-# docs/SIGNING.md: an unsigned installer that drops an unsigned, socket-
-# listening llama-server.exe onto disk looks exactly like a malware dropper
-# to a heuristic scanner, and at least one (Avast) acted on that during
-# development. A signature is the only thing that actually fixes it.
+# code-signing certificate. Rationale and setup: docs/SIGNING.md.
 #
 # SignPath will only sign artifacts it can trace to a trusted build — it
 # pulls the artifact from this workflow run via the GitHub API rather than
 # accepting an upload. That is why the build must happen here and not on a
 # developer's machine.
 #
-# Two signing passes, on purpose:
+# WHAT GETS SIGNED, AND WHY IT IS SO LITTLE
 #
-#   1. the unpacked app, so every PE inside it is signed — including
-#      llama-server.exe and the ggml/CUDA DLLs beside it, which are the
-#      files scanners actually object to
-#   2. the NSIS installer built from those already-signed files
+# The SignPath Foundation code of conduct says a project may sign only
+# artifacts built from its own source, and that upstream OSS binaries must
+# be shipped *unsigned* inside the signed package. Almost nothing in this
+# package qualifies as ours:
 #
-# Signing only the installer would leave the binary that gets quarantined
-# unsigned on disk after install, which defeats the point.
+#   MechApe.exe            our build's Electron host        -> signed
+#   the NSIS installer     produced by our build            -> signed
+#   resources/runtime/**   llama.cpp, verbatim from ggml-org -> NOT ours
+#   ffmpeg.dll, libGLESv2.dll, vk_swiftshader.dll, …
+#                          Chromium/Electron upstream        -> NOT ours
+#   resources/app/**       our code, but it is JavaScript — nothing to sign
+#
+# So the two passes below name those two files explicitly. An earlier
+# revision globbed **/*.exe;**/*.dll over the whole unpacked tree, which
+# would have signed the entire llama.cpp runtime — precisely what the policy
+# forbids.
+#
+# Note what this does NOT fix: llama-server.exe is the binary antivirus
+# actually quarantines (Avast took it twice during development), and it is
+# upstream, so it ships unsigned and stays exposed. Signing removes the
+# SmartScreen warning on the installer and on the app itself. The real fix
+# for the runtime is upstream signing — see docs/SIGNING.md.
 #
 # Until the SignPath application is approved, SIGNPATH_API_TOKEN will not
 # exist and both passes are skipped: the workflow still builds and still
@@ -51,7 +62,10 @@ env:
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 45
+    # Generous because SignPath requires a human to approve each signing
+    # request, and this job waits on two of them. The build itself takes
+    # under five minutes; the rest is waiting for someone to click approve.
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v4
@@ -108,23 +122,21 @@ jobs:
             echo "::warning::SIGNPATH_API_TOKEN is not set — publishing UNSIGNED. See docs/SIGNING.md."
           fi
 
-      # ---- pass 1: sign every binary inside the app ----
+      # ---- pass 1: the app executable, on its own ----
+      # Submitted as a bare PE rather than a zip of the tree: the tree is
+      # mostly upstream binaries we are not permitted to sign, and naming the
+      # one file we may sign makes that impossible to get wrong by accident.
 
-      - name: Package the unpacked app for signing
+      - name: Upload the app executable for SignPath
         if: steps.signing.outputs.enabled == 'true'
-        shell: pwsh
-        run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath mechape-unpacked.zip
-
-      - name: Upload unpacked app for SignPath
-        if: steps.signing.outputs.enabled == 'true'
-        id: upload-unpacked
+        id: upload-app
         uses: actions/upload-artifact@v4
         with:
-          name: mechape-unpacked
-          path: mechape-unpacked.zip
+          name: mechape-exe-unsigned
+          path: dist/win-unpacked/MechApe.exe
           retention-days: 1
 
-      - name: Sign the app binaries
+      - name: Sign the app executable
         if: steps.signing.outputs.enabled == 'true'
         uses: SignPath/github-action-submit-signing-request@v1
         with:
@@ -132,29 +144,28 @@ jobs:
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: unpacked-app
-          github-artifact-id: ${{ steps.upload-unpacked.outputs.artifact-id }}
+          artifact-configuration-slug: application
+          github-artifact-id: ${{ steps.upload-app.outputs.artifact-id }}
+          # A signing request needs manual approval in the SignPath UI, so
+          # this step blocks on a human. The job timeout is sized for that.
           wait-for-completion: true
           output-artifact-directory: signed-app
 
-      # Overwrite the unpacked tree with the signed binaries, so the installer
-      # built next contains signed files rather than the originals.
-      - name: Replace binaries with their signed copies
+      # Put the signed executable back before the installer is built, so the
+      # installer packages the signed copy.
+      - name: Replace the executable with its signed copy
         if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
         run: |
-          $zip = Get-ChildItem signed-app -Filter *.zip | Select-Object -First 1
-          if (-not $zip) { throw "SignPath returned no zip in signed-app/" }
-          Expand-Archive -Path $zip.FullName -DestinationPath dist/win-unpacked -Force
+          $signed = Get-ChildItem signed-app -Recurse -Filter MechApe.exe | Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no MechApe.exe in signed-app/" }
+          Copy-Item $signed.FullName dist/win-unpacked/MechApe.exe -Force
 
-          # Prove the signature actually landed on the binary this whole
-          # exercise is about, rather than assuming the round-trip worked.
-          $server = Get-ChildItem dist/win-unpacked -Recurse -Filter llama-server.exe |
-                    Select-Object -First 1
-          if (-not $server) { throw "llama-server.exe not found in the unpacked app" }
-          $sig = Get-AuthenticodeSignature $server.FullName
-          "llama-server.exe: $($sig.Status) — $($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') { throw "llama-server.exe is not validly signed: $($sig.Status)" }
+          # Confirm the round-trip actually produced a signature rather than
+          # assuming it did.
+          $sig = Get-AuthenticodeSignature dist/win-unpacked/MechApe.exe
+          "MechApe.exe: $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "MechApe.exe is not validly signed: $($sig.Status)" }
 
       # ---- stage 2: the installer, built from whatever is now on disk ----
 

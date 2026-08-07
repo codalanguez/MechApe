@@ -102,7 +102,7 @@ npm run dist
 
 A self-signed certificate (as generated here) makes signatures verify on machines that trust it, but other people's PCs still see "unknown publisher" and SmartScreen still warns — only a CA-issued certificate fixes that.
 
-**Released builds are signed in CI instead.** `.github/workflows/release.yml` builds on a version tag and signs through [SignPath Foundation][signpath], in two passes: every binary inside the unpacked app (which is what makes the bundled `llama-server.exe` signed *on disk after install*, the file scanners actually object to), then the installer built from those signed files. SignPath pulls the artifact from the workflow run itself and verifies its origin, so a locally built installer can't be signed with that certificate by design. Setup, the application process, and how to verify a signature are in **[docs/SIGNING.md](docs/SIGNING.md)**. Until the application is approved the workflow still builds and publishes — just unsigned, and labelled as such.
+**Released builds are signed in CI instead.** `.github/workflows/release.yml` builds on a version tag and signs through [SignPath Foundation][signpath] — `MechApe.exe`, then the installer built around it. Only those two: the Foundation's policy allows a project to sign only what it builds from its own source, so the bundled llama.cpp runtime and Electron's own libraries ship unsigned inside the signed package. That means signing clears the SmartScreen warning on the installer and the app, but does *not* protect `llama-server.exe` from antivirus heuristics — it stays unsigned because it belongs to upstream. SignPath pulls the artifact from the workflow run and verifies its origin, so a locally built installer can't carry that certificate by design. Full rationale, setup and eligibility in **[docs/SIGNING.md](docs/SIGNING.md)**. Until the application is approved the workflow still builds and publishes — unsigned, and labelled as such.
 
 [signpath]: https://signpath.org/
 
@@ -293,6 +293,25 @@ MechApe is a single-user local app, hardened accordingly:
 Your chats and project data stay on your disk. UI fonts are bundled locally (no Google Fonts requests), so out of the box the **only** outbound connections are ones you explicitly caused: downloading `llama-server` itself (once, verified) and pulling a model you asked for (from Hugging Face). [Remote models via OpenRouter](#optional-remote-models-openrouter) are the one other exception, and only ever affect chats where you explicitly picked a remote model — and say so with a badge.
 
 The desktop shell adds its own hardening: sandboxed renderer with context isolation, a navigation guard (the window can only ever display the app — external links open in your real browser), all web permission requests (camera, mic, location…) denied, and preferences IPC that only accepts calls from the app's own pages.
+
+## Code signing policy
+
+> **Status:** MechApe's application to SignPath Foundation is pending. Until it is approved, released builds are **unsigned** and say so in their release notes. This section describes the arrangement once it is in place.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+**Team roles**
+
+- **Committers and reviewers:** [codalanguez](https://github.com/codalanguez) — sole maintainer. Pull requests from outside contributors are reviewed before merge.
+- **Approvers:** [codalanguez](https://github.com/codalanguez) — every signing request is approved individually.
+
+**Privacy policy**
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+Two things a user can request that do cause outbound traffic, both explicit and both off unless chosen: downloading a model from [Hugging Face](https://huggingface.co/), and — only for chats where a remote model was deliberately selected — sending that conversation to [OpenRouter](https://openrouter.ai/) under your own API key, subject to [OpenRouter's privacy policy](https://openrouter.ai/privacy). Local chats, attachments, and the retrieval index never leave the machine.
+
+**What is signed:** `MechApe.exe` and the Windows installer. Bundled upstream components — the [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime and Electron's own libraries — ship unsigned, as SignPath Foundation policy requires for code the project does not build from its own source. Details in [docs/SIGNING.md](docs/SIGNING.md).
 
 ## Roadmap
 

@@ -19,7 +19,7 @@ import { loadModels } from './status.js';
 export const OR_PREFIX = 'openrouter:';
 export const isRemoteModel = (name) => typeof name === 'string' && name.startsWith(OR_PREFIX);
 
-const FAV_KEY = 'monkii.orFavorites';
+const FAV_KEY = 'mechape.orFavorites';
 
 export function orFavorites() {
   try { return JSON.parse(localStorage.getItem(FAV_KEY)) || []; } catch { return []; }

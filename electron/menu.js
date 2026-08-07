@@ -1,7 +1,7 @@
 /**
  * menu.js — the application menu, including live Projects & Skills submenus.
  *
- * The Monkii menu mirrors app data: its Projects and Skills submenus are
+ * The MechApe menu mirrors app data: its Projects and Skills submenus are
  * built from the server's own API, so the menu is rebuilt whenever the window
  * regains focus (wired in main.js) and after boot or a server restart.
  * Item clicks are forwarded to the web UI over the 'menu:action' IPC channel
@@ -10,7 +10,6 @@
 const { Menu, shell } = require('electron');
 const runtime = require('./runtime');
 const { effectiveStorage, logDir } = require('./settings');
-const { askModelsDir } = require('./ollama');
 
 const MENU_LIST_LIMIT = 25; // native menus get unwieldy past this
 
@@ -71,7 +70,7 @@ async function buildMenu() {
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
-      label: 'Monkii',
+      label: 'MechApe',
       submenu: [
         {
           label: 'Open in Browser',
@@ -88,11 +87,8 @@ async function buildMenu() {
           click: () => sendToUI('manage-models'),
         },
         {
-          label: 'Ollama Models Folder…',
-          click: () => askModelsDir({
-            allowCancel: true,
-            detail: 'Takes effect the next time Monkii starts Ollama (quit Ollama and relaunch the app).',
-          }),
+          label: 'Open Models Folder',
+          click: () => shell.openPath(effectiveStorage().modelsDir),
         },
         { type: 'separator' },
         { label: 'Projects', submenu: projectsSubmenu(projects) },
@@ -122,10 +118,10 @@ async function buildMenu() {
       label: 'Help',
       submenu: [
         { label: 'Help & FAQ', click: () => sendToUI('help') },
-        { label: 'About Monkii', click: () => sendToUI('about') },
+        { label: 'About MechApe', click: () => sendToUI('about') },
         { type: 'separator' },
-        { label: 'GitHub Repository', click: () => shell.openExternal('https://github.com/codalanguez/Monkii') },
-        { label: 'Read the README', click: () => shell.openExternal('https://github.com/codalanguez/Monkii#readme') },
+        { label: 'GitHub Repository', click: () => shell.openExternal('https://github.com/codalanguez/MechApe') },
+        { label: 'Read the README', click: () => shell.openExternal('https://github.com/codalanguez/MechApe#readme') },
       ],
     },
   ]));

@@ -85,7 +85,7 @@ test('stream: usage is emitted with hard numeric coercion', async () => {
     'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":"<img onerror=x>","completion_tokens":"12","total_tokens":12,"cost":"0.5"}}\n\n',
     'data: [DONE]\n\n',
   ]);
-  const usage = events.find(e => e.or_usage)?.or_usage;
+  const usage = events.find(e => e.usage)?.usage;
   assert.deepStrictEqual(usage, { promptTokens: 0, completionTokens: 12, cost: null },
     'provider-supplied strings must never survive the boundary');
 });
@@ -101,7 +101,7 @@ test('stream: a newline-less oversized line fails loudly instead of buffering fo
   assert.match(events[0].error, /oversized/i);
 });
 
-test('stream: a usage chunk without total_tokens emits no or_usage', async () => {
+test('stream: a usage chunk without total_tokens emits no usage event', async () => {
   const events = await collect(['data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":5}}\n\ndata: [DONE]\n\n']);
   assert.deepStrictEqual(events, [{ done: true }]);
 });

@@ -1,5 +1,5 @@
 /**
- * api.js — thin JSON client for the Monkii backend.
+ * api.js — thin JSON client for the MechApe backend.
  *
  * Wraps fetch with JSON headers/body handling and turns non-2xx responses
  * into thrown Errors carrying the server's error message plus its HTTP

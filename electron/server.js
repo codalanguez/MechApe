@@ -45,8 +45,29 @@ function waitForServer(port, timeoutMs = 30000) {
   });
 }
 
-/** Fork server.js on `port` using Electron's own Node runtime. */
-function startServer(port) {
+/* PIDs of the llama-server (chat/embed) processes the forked server has
+ * spawned (lib/llamacpp.js), reported over the fork's IPC channel. Killing
+ * the forked server's ChildProcess handle does NOT reliably kill ITS
+ * children on Windows: subprocess.kill() there calls TerminateProcess
+ * directly instead of delivering a catchable signal, so the child never
+ * gets a chance to clean up its own grandchildren. Tracking PIDs here and
+ * killing them directly (same TerminateProcess semantics, but aimed
+ * correctly) is what actually guarantees no orphaned llama-server.exe. */
+const llamaPids = { chat: null, embed: null };
+
+function killTrackedLlamaProcesses() {
+  for (const role of Object.keys(llamaPids)) {
+    const pid = llamaPids[role];
+    llamaPids[role] = null;
+    if (!pid) continue;
+    try { process.kill(pid); } catch { /* already gone */ }
+  }
+}
+
+/** Fork server.js on `port` using Electron's own Node runtime. `extraEnv`
+ * (the resolved llama.cpp binary path + instance URLs) is merged in on top
+ * of the persisted storage/preference env. */
+function startServer(port, extraEnv = {}) {
   const proc = fork(path.join(runtime.APP_ROOT, 'server.js'), [], {
     cwd: runtime.APP_ROOT,
     env: {
@@ -54,23 +75,31 @@ function startServer(port) {
       ELECTRON_RUN_AS_NODE: '1',
       PORT: String(port),
       ...storageEnv(),
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   runtime.serverProc = proc;
   proc.stdout?.on('data', (d) => process.stdout.write(`[server] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[server] ${d}`));
+  proc.on('message', (msg) => {
+    if (msg && msg.type === 'llamacpp:pid' && (msg.role === 'chat' || msg.role === 'embed')) {
+      llamaPids[msg.role] = msg.pid;
+    }
+  });
   proc.on('exit', (code) => {
     if (runtime.serverProc === proc) runtime.serverProc = null;
+    killTrackedLlamaProcesses(); // the server that owned these just died — nothing left to talk to them
     if (code && !app.isQuitting && !proc.expectedExit) {
-      dialog.showErrorBox('Monkii', `The server process exited unexpectedly (code ${code}).`);
+      dialog.showErrorBox('MechApe', `The server process exited unexpectedly (code ${code}).`);
       app.quit();
     }
   });
 }
 
-/** Kill the forked server, start it again with fresh env, reload the UI. */
-async function restartServer() {
+/** Kill the forked server (and any llama-server processes it owned), start
+ * it again with fresh env, reload the UI. */
+async function restartServer(extraEnv) {
   await new Promise((resolve) => {
     const proc = runtime.serverProc;
     if (!proc) return resolve();
@@ -78,9 +107,9 @@ async function restartServer() {
     proc.once('exit', resolve);
     proc.kill();
   });
-  startServer(runtime.serverPort);
+  startServer(runtime.serverPort, extraEnv || runtime.llamacppEnv || {});
   await waitForServer(runtime.serverPort);
   runtime.win?.webContents.reload();
 }
 
-module.exports = { findFreePort, waitForServer, startServer, restartServer };
+module.exports = { findFreePort, waitForServer, startServer, restartServer, killTrackedLlamaProcesses };

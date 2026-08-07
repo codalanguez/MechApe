@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Monkii</title>
+<title>MechApe</title>
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="style.css">
@@ -15,11 +15,10 @@
   <!-- ===== left rail: projects & chats ===== -->
   <aside id="rail">
     <header id="brand">
-      <img class="brand-mark" src="icon.png" alt="Monkii">
+      <img class="brand-mark" src="icon.png" alt="MechApe">
       <div>
         <h1>Mon<span>kii</span></h1>
-        <div id="ollama-status" class="status status-unknown"><i></i><span>checking Ollama…</span></div>
-        <a id="ollama-update" class="update-pill" href="https://ollama.com/download" target="_blank" rel="noopener" hidden></a>
+        <div id="local-status" class="status status-unknown"><i></i><span>checking local models…</span></div>
       </div>
     </header>
 
@@ -39,10 +38,10 @@
     </div>
 
     <footer id="rail-foot">
-      <span class="rail-tag" title="Local by default. When a chat uses a remote model, Monkii says so — always.">local-first · honest · yours</span>
+      <span class="rail-tag" title="Local by default. When a chat uses a remote model, MechApe says so — always.">local-first · honest · yours</span>
       <div class="rail-actions">
         <button id="btn-help" class="icon-btn" title="Help &amp; FAQ">?</button>
-        <button id="btn-about" class="icon-btn" title="About Monkii">ⓘ</button>
+        <button id="btn-about" class="icon-btn" title="About MechApe">ⓘ</button>
         <button id="btn-prefs" class="icon-btn" title="Preferences" hidden>⚙</button>
       </div>
     </footer>
@@ -61,7 +60,7 @@
     <div id="welcome" class="welcome">
       <img class="welcome-ember" src="icon.png" alt="">
       <h2>Your models. Your machine. Your mischief.</h2>
-      <p>Create a project, attach files from your machine, switch on skills, and talk to your local Ollama models — nothing ever leaves this computer.</p>
+      <p>Create a project, attach files from your machine, switch on skills, and talk to your own local models — nothing ever leaves this computer.</p>
       <button id="btn-welcome-project" class="btn btn-primary">Create your first project</button>
       <button id="btn-welcome-quick" class="btn btn-ghost">or start a quick chat</button>
       <div id="welcome-hint" class="welcome-hint" hidden></div>
@@ -272,7 +271,7 @@
       </header>
       <div class="mm-scroll">
         <div class="mm-pull">
-          <input id="mm-pull-name" type="text" placeholder="Pull a model, e.g. llama3.2 or qwen2.5:7b">
+          <input id="mm-pull-name" type="text" placeholder="Pull from Hugging Face, e.g. bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M">
           <button id="btn-mm-pull" class="btn btn-primary">Pull</button>
         </div>
         <div id="mm-progress" hidden>
@@ -386,7 +385,7 @@
       </header>
       <div class="prefs-body">
         <details class="field" open>
-          <summary><span>Theme <em>the palette Monkii wears</em></span></summary>
+          <summary><span>Theme <em>the palette MechApe wears</em></span></summary>
           <div class="prefs-actions">
             <select id="prefs-theme" class="prefs-theme-select" title="Theme">
               <optgroup label="Dark">
@@ -406,19 +405,6 @@
         </details>
 
         <details class="field prefs-desktop">
-          <summary><span>Ollama models folder <em>where pulled models are stored on disk</em></span></summary>
-          <div id="prefs-models-dir" class="prefs-path"></div>
-          <div class="prefs-actions">
-            <button id="btn-prefs-choose-dir" class="btn btn-ghost">Choose folder…</button>
-            <button id="btn-prefs-default-dir" class="btn btn-ghost">Use Ollama default</button>
-          </div>
-          <div id="prefs-env-note" class="prefs-note" hidden>
-            Set by the <b>OLLAMA_MODELS</b> environment variable — it overrides this preference. Unset it to manage the folder here.
-          </div>
-          <div class="prefs-note">Takes effect the next time Monkii starts Ollama (quit Ollama, then relaunch the app).</div>
-        </details>
-
-        <details class="field prefs-desktop">
           <summary><span>Projects &amp; chats folder <em>where conversations and project settings are saved</em></span></summary>
           <div id="prefs-data-dir" class="prefs-path"></div>
           <div class="prefs-actions">
@@ -426,7 +412,7 @@
             <button id="btn-prefs-default-data" class="btn btn-ghost">Use default</button>
           </div>
           <div id="prefs-data-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_DATA_DIR</b> environment variable — it overrides this preference.
+            Set by the <b>MECHAPE_DATA_DIR</b> environment variable — it overrides this preference.
           </div>
           <div class="prefs-note">Changing this restarts the app view. Existing chats stay in the old folder — move the JSON files over if you want them in the new one.</div>
         </details>
@@ -439,9 +425,32 @@
             <button id="btn-prefs-default-skills" class="btn btn-ghost">Use default</button>
           </div>
           <div id="prefs-skills-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_SKILLS_DIR</b> environment variable — it overrides this preference.
+            Set by the <b>MECHAPE_SKILLS_DIR</b> environment variable — it overrides this preference.
           </div>
           <div class="prefs-note">Point this at an existing library (e.g. <b>~\.claude\skills</b>) to use your Claude Code skills as-is.</div>
+        </details>
+
+        <details class="field prefs-desktop">
+          <summary><span>Models folder <em>where downloaded .gguf files are stored on disk</em></span></summary>
+          <div id="prefs-models-dir" class="prefs-path"></div>
+          <div class="prefs-actions">
+            <button id="btn-prefs-choose-models" class="btn btn-ghost">Choose folder…</button>
+            <button id="btn-prefs-default-models" class="btn btn-ghost">Use default</button>
+          </div>
+          <div id="prefs-models-env-note" class="prefs-note" hidden>
+            Set by the <b>MECHAPE_MODELS_DIR</b> environment variable — it overrides this preference.
+          </div>
+          <div class="prefs-note">Changing this restarts the app view. Move any existing <b>.gguf</b> files over yourself if you want them in the new folder — e.g. if your models live on another drive.</div>
+        </details>
+
+        <details class="field prefs-desktop" id="prefs-cuda-section">
+          <summary><span>GPU acceleration <em>which build MechApe runs your models on</em></span></summary>
+          <div id="prefs-accel-current" class="prefs-path"></div>
+          <label class="prefs-toggle">
+            <input type="checkbox" id="prefs-use-cuda">
+            <span>Use the NVIDIA CUDA build (downloads ~640 MB once)</span>
+          </label>
+          <div class="prefs-note">A <b>Vulkan</b> build ships inside MechApe and runs on NVIDIA, AMD, and Intel alike, picking your fastest card automatically — nothing to download. On an <b>NVIDIA</b> card MechApe prefers <b>CUDA</b> instead, because Vulkan's throughput on NVIDIA has measured badly (on the machine this was developed on, worse than CPU). llama.cpp packages the CUDA runtime separately, so that choice costs a one-time <b>~640 MB</b> download from GitHub, SHA256-verified before it runs. Untick to stay on the bundled Vulkan build and download nothing. On AMD and Intel this setting does nothing — CUDA can't see those cards. <b>Takes effect the next time you start MechApe.</b></div>
         </details>
 
         <details class="field prefs-desktop">
@@ -454,9 +463,9 @@
             <button id="btn-prefs-fs-home" class="btn btn-ghost">Reset to home folder</button>
           </div>
           <div id="prefs-fs-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_FS_ROOTS</b> environment variable — it overrides this preference.
+            Set by the <b>MECHAPE_FS_ROOTS</b> environment variable — it overrides this preference.
           </div>
-          <div class="prefs-note">By default Monkii can only read inside your home folder (this includes <b>AppData</b> and dotfiles like <b>.ssh</b> — narrow it to a specific folder if that matters to you). Add a folder to allow attachments from elsewhere (e.g. a projects drive), or allow the whole disk. Changing this restarts the app view.</div>
+          <div class="prefs-note">By default MechApe can only read inside your home folder (this includes <b>AppData</b> and dotfiles like <b>.ssh</b> — narrow it to a specific folder if that matters to you). Add a folder to allow attachments from elsewhere (e.g. a projects drive), or allow the whole disk. Changing this restarts the app view.</div>
         </details>
 
         <details class="field prefs-desktop">
@@ -469,14 +478,14 @@
             <button id="btn-prefs-or-clear" class="btn btn-ghost">Remove key</button>
           </div>
           <div id="prefs-or-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_OPENROUTER_KEY</b> environment variable — it overrides this preference.
+            Set by the <b>MECHAPE_OPENROUTER_KEY</b> environment variable — it overrides this preference.
           </div>
           <label class="prefs-toggle">
             <input type="checkbox" id="prefs-or-logging">
             <span>Allow providers that log or train on prompts (wider model choice)</span>
           </label>
           <div id="prefs-or-logging-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_OR_DATA_COLLECTION</b> environment variable — it overrides this preference.
+            Set by the <b>MECHAPE_OR_DATA_COLLECTION</b> environment variable — it overrides this preference.
           </div>
           <div class="prefs-note"><b>This changes where your words go.</b> Chats that use an OpenRouter model send that chat's messages, project instructions, and attachments to openrouter.ai and the model's provider — they leave this machine. Local models are never affected, and nothing goes remote unless you pick a remote model for a chat. The key is stored OS-encrypted and never shown again. While a key is saved, opening this panel or the ☁ model browser checks your credit balance with OpenRouter (no chat data — just the key, cached for a minute). Saving restarts the app view.</div>
         </details>
@@ -490,18 +499,6 @@
             <button id="btn-prefs-wipe" class="btn btn-danger-ghost">Erase everything…</button>
           </div>
           <div class="prefs-note">Backup zips your projects &amp; chats to a folder you choose — cached embeddings aren't included, they rebuild automatically. Erasing removes every project, chat, and cached embedding; skills and these preferences are untouched. Neither can be undone once done — back up first if you want to keep anything.</div>
-        </details>
-
-        <details class="field prefs-desktop">
-          <summary><span>Update check <em>look for newer Ollama releases</em></span></summary>
-          <label class="prefs-toggle">
-            <input type="checkbox" id="prefs-update-check">
-            <span>Check GitHub daily for a newer Ollama version</span>
-          </label>
-          <div id="prefs-update-env-note" class="prefs-note" hidden>
-            Set by the <b>MONKII_UPDATE_CHECK</b> environment variable — it overrides this preference.
-          </div>
-          <div class="prefs-note"><b>Off by default.</b> This is the only thing Monkii ever sends off your machine — a version check to GitHub, with no data about you or your chats. Enable it to get update notifications. Changing this restarts the app view.</div>
         </details>
       </div>
     </div>
@@ -522,7 +519,7 @@
           <p>Add files or folders with the <b>📎</b> in the chat header (just this chat) or the <b>Knowledge</b> panel (the whole project). Attachments are re-read from disk every message, so your latest edits always show up.</p>
 
           <h4>Big files &amp; long documents</h4>
-          <p>A large attachment — a manuscript, a codebase — is embedded on-device, and only the passages relevant to your question are added to the prompt. You'll see an <b>“indexing %”</b> badge while it prepares. It needs a small embedding model, which Monkii offers to download on first run.</p>
+          <p>A large attachment — a manuscript, a codebase — is embedded on-device, and only the passages relevant to your question are added to the prompt. You'll see an <b>“indexing %”</b> badge while it prepares. It needs a small embedding model, which MechApe offers to download on first run.</p>
 
           <h4>Skills</h4>
           <p>Drop a <code>SKILL.md</code> folder into your skills directory, or use <b>✦ Skills → New / Import</b>. Toggle a skill on for a whole project, or invoke one for a single message by typing <b>/</b> in the composer.</p>
@@ -531,25 +528,25 @@
           <p>Pick a model per chat. <b>Manage models…</b> pulls, deletes, and shows disk usage; the <b>⚙</b> next to the model opens <b>Model settings</b> (context length, temperature, and more).</p>
 
           <h4>File access</h4>
-          <p>By default Monkii can only read inside your home folder. To attach from elsewhere, widen it in <b>Preferences → File access</b>.</p>
+          <p>By default MechApe can only read inside your home folder. To attach from elsewhere, widen it in <b>Preferences → File access</b>.</p>
 
           <h4>Remote models (optional)</h4>
           <p>If your hardware can't run the model you need, add an <b>OpenRouter API key</b> in <b>Preferences → Remote models</b>, then browse the catalog with the <b>☁</b> next to the model picker and ★ models into it. Chats using a remote model show a <b>☁ remote</b> badge — that chat's text goes to OpenRouter and the model's provider. Local chats are never affected.</p>
 
           <h4>Privacy</h4>
-          <p>Out of the box, nothing leaves your machine. Two things are opt-in and off by default: the daily Ollama update check (Preferences → Update check), and remote models — which only apply to chats where you picked a <b>☁ remote</b> model.</p>
+          <p>Out of the box, nothing leaves your machine except pulling a model you asked for (from Hugging Face) or downloading the llama.cpp backend itself on first run. Remote models are the only other opt-in exception — they only apply to chats where you picked a <b>☁ remote</b> model.</p>
 
           <h4>Tips</h4>
           <ul>
             <li><b>Right-click</b> chats, projects, messages, and skills for quick actions.</li>
             <li>Type <b>/</b> in the composer to invoke a skill for one message.</li>
-            <li>If a chat gets long, Monkii trims old messages to fit — or start a new chat, or raise the context length in Model settings.</li>
+            <li>If a chat gets long, MechApe trims old messages to fit — or start a new chat, or raise the context length in Model settings.</li>
             <li>If a model keeps <b>restating its plan</b> instead of doing the work ("I'll pull X, then draft Y…" on every reply), "continue" or "progress?" won't break the loop — give it a direct instruction instead, e.g. <i>"Stop planning — write it now."</i></li>
           </ul>
         </div>
         <div class="help-links">
-          <a href="https://github.com/codalanguez/Monkii" target="_blank" rel="noopener">GitHub repository ↗</a>
-          <a href="https://github.com/codalanguez/Monkii#readme" target="_blank" rel="noopener">Read the README ↗</a>
+          <a href="https://github.com/codalanguez/MechApe" target="_blank" rel="noopener">GitHub repository ↗</a>
+          <a href="https://github.com/codalanguez/MechApe#readme" target="_blank" rel="noopener">Read the README ↗</a>
         </div>
       </div>
     </div>
@@ -558,19 +555,19 @@
   <div id="about-backdrop" class="modal-backdrop" hidden>
     <div id="about-panel" class="modal-panel">
       <header>
-        <h3>About Monkii</h3>
+        <h3>About MechApe</h3>
         <button id="btn-close-about" class="icon-btn" title="Close">×</button>
       </header>
       <div class="about-body">
         <div class="about-mark">🐒 <span>MON<b>KII</b></span></div>
-        <p>A <b>local, private LLM studio</b> for <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> — projects, Claude-style skills, and live file knowledge. Local by default: nothing about you or your chats leaves your machine unless you deliberately point a chat at a <b>☁ remote</b> model — and Monkii always tells you when the text is leaving the room.</p>
-        <p>Built by <b>Coda Languez</b> as a desktop home for local AI: it began as a ComfyUI-style wrapper around Ollama and grew into a full studio for writing and coding — local-first, and honest about the one thing that isn't: remote models you choose yourself.</p>
+        <p>A <b>local, private LLM studio</b> built on its own <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noopener">llama.cpp</a> backend — projects, Claude-style skills, and live file knowledge. Local by default: nothing about you or your chats leaves your machine unless you deliberately point a chat at a <b>☁ remote</b> model — and MechApe always tells you when the text is leaving the room.</p>
+        <p>Built by <b>Coda Languez</b> as a desktop home for local AI: it began as a ComfyUI-style wrapper around Ollama and grew into a studio that runs its own local models directly — local-first, and honest about the one thing that isn't: remote models you choose yourself.</p>
         <dl class="about-meta">
           <div><dt>Version</dt><dd id="about-version">—</dd></div>
           <div><dt>Built</dt><dd id="about-build">—</dd></div>
         </dl>
         <div class="help-links">
-          <a href="https://github.com/codalanguez/Monkii" target="_blank" rel="noopener">github.com/codalanguez/Monkii ↗</a>
+          <a href="https://github.com/codalanguez/MechApe" target="_blank" rel="noopener">github.com/codalanguez/MechApe ↗</a>
         </div>
       </div>
     </div>

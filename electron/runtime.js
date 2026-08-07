@@ -18,6 +18,7 @@ const runtime = {
   win: null,          // main BrowserWindow, null when closed
   serverProc: null,   // forked server.js child process, null when not running
   serverPort: Number(process.env.PORT) || 8113,
+  llamacppEnv: null,  // {MECHAPE_LLAMACPP_BIN, MECHAPE_LLAMACPP_CHAT_URL, MECHAPE_LLAMACPP_EMBED_URL} — resolved once at boot, reused by restartServer()
 
   /** The app's own URL on the current port. */
   appUrl() {

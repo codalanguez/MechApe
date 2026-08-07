@@ -3,7 +3,7 @@
  *
  * Powers the in-app file browser: lists a directory's entries (directories
  * first), exposes a "__drives__" pseudo-directory that enumerates drive
- * letters — or, when MONKII_FS_ROOTS is set, the allowed roots instead —
+ * letters — or, when MECHAPE_FS_ROOTS is set, the allowed roots instead —
  * and refuses to look outside the allowlist. Also serves a read-only preview
  * of a single file (GET /fs/read) and lets the UI save chat content to disk
  * (POST /fs/write), both fenced by the same allowlist as browsing.
@@ -53,7 +53,7 @@ router.get('/fs', (req, res) => {
     const tops = FS_ROOTS.length ? FS_ROOTS : listDrives();
     return res.json({ dir: '__drives__', entries: tops.map(d => ({ name: d, path: d, isDir: true })) });
   }
-  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' });
+  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true })
       .filter(e => !e.name.startsWith('$') && e.name !== 'System Volume Information')
@@ -71,7 +71,7 @@ router.get('/fs', (req, res) => {
 router.get('/fs/read', (req, res) => {
   const target = typeof req.query.path === 'string' ? req.query.path : '';
   if (!target) return res.status(400).json({ error: 'path required' });
-  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' });
+  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
   let stat;
   try { stat = fs.statSync(target); }
   catch { return res.status(404).json({ error: 'file not found' }); }
@@ -113,7 +113,7 @@ router.post('/fs/write', (req, res) => {
 
   if (!dir || !filename) return res.status(400).json({ error: 'dir and filename required' });
   if (!SAFE_FILENAME.test(filename)) return res.status(400).json({ error: 'invalid filename' });
-  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' });
+  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
   let dirStat;
   try { dirStat = fs.statSync(dir); }
   catch { return res.status(404).json({ error: 'folder not found' }); }
@@ -121,11 +121,11 @@ router.post('/fs/write', (req, res) => {
 
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > WRITE_MAX_BYTES) {
-    return res.status(413).json({ error: `That's ${(bytes / 1024 / 1024).toFixed(1)} MB — files saved from Monkii are capped at ${(WRITE_MAX_BYTES / 1024 / 1024).toFixed(1)} MB.` });
+    return res.status(413).json({ error: `That's ${(bytes / 1024 / 1024).toFixed(1)} MB — files saved from MechApe are capped at ${(WRITE_MAX_BYTES / 1024 / 1024).toFixed(1)} MB.` });
   }
 
   const target = path.join(dir, filename);
-  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' }); // defense in depth
+  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' }); // defense in depth
   let exists = false;
   try { exists = fs.statSync(target).isDirectory() ? 'dir' : true; } catch { /* doesn't exist — the common case */ }
   if (exists === 'dir') return res.status(400).json({ error: 'a folder with that name already exists there' });

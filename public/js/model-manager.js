@@ -1,9 +1,10 @@
 /**
- * model-manager.js — pull, delete, and see disk usage for Ollama models.
+ * model-manager.js — pull, delete, and see disk usage for local models.
  *
  * A modal (opened from Model settings or the desktop menu) that lists the
- * installed models with sizes and a running total, deletes one on request,
- * and pulls a new one while streaming Ollama's download progress into a bar.
+ * installed .gguf files with sizes and a running total, deletes one on
+ * request, and pulls a new one — given a Hugging Face repo (optionally
+ * "owner/repo:QUANT") — while streaming its download progress into a bar.
  * After any change it refreshes both the header model picker and its own list
  * so the rest of the app sees new/removed models immediately.
  */
@@ -31,9 +32,9 @@ async function renderList() {
           <div class="mm-size">${fmtSize(m.size)}</div>
           <button class="mm-del" data-model="${esc(m.name)}" title="Delete this model">Delete</button>
         </li>`).join('')
-      : '<li class="empty">No models installed. Pull one above (e.g. llama3.2).</li>';
+      : '<li class="empty">No models installed. Pull one above (e.g. bartowski/Llama-3.2-3B-Instruct-GGUF).</li>';
     ul.querySelectorAll('.mm-del').forEach(b => b.addEventListener('click', () => del(b.dataset.model)));
-  } catch { ul.innerHTML = '<li class="empty">Ollama is not reachable.</li>'; }
+  } catch { ul.innerHTML = '<li class="empty">The local model backend is not reachable.</li>'; }
 }
 
 async function del(name) {
@@ -49,7 +50,7 @@ async function del(name) {
 
 async function pull() {
   const name = $('#mm-pull-name').value.trim();
-  if (!name) { toast('Enter a model name to pull', true); return; }
+  if (!name) { toast('Enter a Hugging Face repo to pull (e.g. owner/repo or owner/repo:Q4_K_M)', true); return; }
 
   const btn = $('#btn-mm-pull');
   const progress = $('#mm-progress');

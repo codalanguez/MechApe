@@ -6,10 +6,11 @@
  *   npm run bench -- --quick # skip the slow 2 MB size
  *   npm run bench -- --print # print the markdown, don't touch the README
  *
- * It runs end-to-end against a live Ollama using the app's own modules, then
- * rewrites everything between the <!-- BENCH:START --> / <!-- BENCH:END -->
- * markers in the README. Uses a throwaway temp data/embed dir, so your real
- * projects and indexes are never touched.
+ * It runs end-to-end against the live llama.cpp chat + embed instances using
+ * the app's own modules, then rewrites everything between the
+ * <!-- BENCH:START --> / <!-- BENCH:END --> markers in the README. Uses a
+ * throwaway temp data/embed dir, so your real projects and indexes are never
+ * touched.
  *
  * Optional flags: --chat-model=<name> --embed-model=<name> --ctx=<n>
  */
@@ -22,8 +23,6 @@ const { performance } = require('perf_hooks');
 
 const REPO = path.join(__dirname, '..');
 const README = path.join(REPO, 'README.md');
-const OLLAMA = process.env.OLLAMA_HOST && /^https?:/.test(process.env.OLLAMA_HOST)
-  ? process.env.OLLAMA_HOST : 'http://localhost:11434';
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -34,18 +33,18 @@ const CTX = parseInt(opt('ctx', '32768'), 10);
 const SIZES = (QUICK ? [128, 512] : [128, 512, 2048]).map(k => k * 1024);
 
 // --- isolate all storage in a temp dir before requiring the app config ---
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'monkii-bench-'));
-process.env.MONKII_DATA_DIR = path.join(tmp, 'projects');
-process.env.MONKII_EMBED_DIR = path.join(tmp, 'emb');
-process.env.MONKII_LOG_DIR = path.join(tmp, 'logs');
-process.env.MONKII_FS_ROOTS = tmp;
-fs.mkdirSync(process.env.MONKII_DATA_DIR, { recursive: true });
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mechape-bench-'));
+process.env.MECHAPE_DATA_DIR = path.join(tmp, 'projects');
+process.env.MECHAPE_EMBED_DIR = path.join(tmp, 'emb');
+process.env.MECHAPE_LOG_DIR = path.join(tmp, 'logs');
+process.env.MECHAPE_FS_ROOTS = tmp;
+fs.mkdirSync(process.env.MECHAPE_DATA_DIR, { recursive: true });
 
 const { buildSystem } = require(path.join(REPO, 'lib', 'prompt'));
 const { readForIndex } = require(path.join(REPO, 'lib', 'attachments'));
 const { estimateTokens } = require(path.join(REPO, 'lib', 'tokens'));
-const { FILE_LIMIT, RETRIEVAL_MIN_CHARS } = require(path.join(REPO, 'lib', 'config'));
-const ollama = require(path.join(REPO, 'lib', 'ollama'));
+const { FILE_LIMIT, RETRIEVAL_MIN_CHARS, LLAMACPP_CHAT_URL, LLAMACPP_EMBED_URL } = require(path.join(REPO, 'lib', 'config'));
+const llamacpp = require(path.join(REPO, 'lib', 'llamacpp'));
 const { embedStatus, isEmbedName } = require(path.join(REPO, 'lib', 'retrieval'));
 
 // --- helpers ---
@@ -57,7 +56,7 @@ const commas = (n) => Math.round(n).toLocaleString('en-US');
 const fail = (m) => { console.error(`\n✗ ${m}`); cleanup(); process.exit(1); };
 const cleanup = () => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} };
 
-function machineLine(embedModel, chatModel, ollamaVer) {
+function machineLine(embedModel, chatModel) {
   const cpu = (os.cpus()[0] && os.cpus()[0].model || 'CPU').replace(/\(R\)|\(TM\)|CPU|@.*/g, '').replace(/\s+/g, ' ').trim();
   const threads = os.cpus().length;
   const ramGB = Math.round(os.totalmem() / 1073741824);
@@ -67,7 +66,7 @@ function machineLine(embedModel, chatModel, ollamaVer) {
       .toString().trim().split('\n')[0].split(',').map(s => s.trim()).join(' · ');
   } catch { gpu = ''; }
   const parts = [`**${cpu} · ${threads} threads · ${ramGB} GB RAM${gpu ? ` · ${gpu}` : ''}**`,
-    `Ollama ${ollamaVer}`, `embed \`${embedModel}\``, `chat \`${chatModel}\``];
+    'llama.cpp backend', `embed \`${embedModel}\``, `chat \`${chatModel}\``];
   return parts.join(', ');
 }
 
@@ -85,8 +84,8 @@ function makeDoc(targetBytes, facts) {
 
 function embIndexStats() {
   let bytes = 0, chunks = 0;
-  for (const f of fs.readdirSync(process.env.MONKII_EMBED_DIR)) {
-    const p = path.join(process.env.MONKII_EMBED_DIR, f);
+  for (const f of fs.readdirSync(process.env.MECHAPE_EMBED_DIR)) {
+    const p = path.join(process.env.MECHAPE_EMBED_DIR, f);
     bytes += fs.statSync(p).size;
     try { chunks += JSON.parse(fs.readFileSync(p, 'utf8')).chunks.length; } catch {}
   }
@@ -94,17 +93,25 @@ function embIndexStats() {
 }
 
 async function prefill(model, system, user) {
-  const body = { model, stream: false, options: { num_ctx: CTX, num_predict: 1 },
+  const body = { model, stream: false, max_tokens: 1,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }] };
   // Loading a chat model right after heavy embedding can transiently reset the
-  // Ollama runner (VRAM contention) — retry a couple of times, letting it settle.
+  // chat instance (VRAM contention) — retry a couple of times, letting it settle.
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await fetch(`${OLLAMA}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!r.ok) throw new Error(`Ollama ${r.status}: ${(await r.text()).slice(0, 120)}`);
+      const t0 = performance.now();
+      const r = await fetch(`${LLAMACPP_CHAT_URL}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(`llama.cpp ${r.status}: ${(await r.text()).slice(0, 120)}`);
       const d = await r.json();
-      return { tokens: d.prompt_eval_count, ms: d.prompt_eval_duration ? d.prompt_eval_duration / 1e6 : null };
+      // llama.cpp's server includes a non-standard `timings` extension on
+      // /v1/chat/completions when it's available; fall back to wall-clock +
+      // an estimate if a particular build doesn't report it.
+      const timings = d.timings || {};
+      return {
+        tokens: timings.prompt_n != null ? timings.prompt_n : estimateTokens(system + user),
+        ms: timings.prompt_ms != null ? timings.prompt_ms : (performance.now() - t0),
+      };
     } catch (e) { lastErr = e; await new Promise(res => setTimeout(res, 3000)); }
   }
   throw lastErr;
@@ -112,15 +119,14 @@ async function prefill(model, system, user) {
 
 async function run() {
   // preflight
-  let ollamaVer;
-  try { ollamaVer = await ollama.getVersion(); } catch { fail(`Ollama not reachable at ${OLLAMA}. Start it (ollama serve) and retry.`); }
+  try { await llamacpp.getVersion(); } catch { fail(`llama.cpp chat instance not reachable at ${LLAMACPP_CHAT_URL}. Start it and retry.`); }
   const es = await embedStatus();
   const embedModel = opt('embed-model', es.name);
-  if (!embedModel) fail(`No embedding model installed. Run: ollama pull ${es.recommended}`);
+  if (!embedModel) fail(`No embedding model installed. Pull one from Manage Models (recommended: ${es.recommended}).`);
   // pick a representative chat model: prefer a common GPU-friendly instruct
   // family (7–8B), else the first non-embedding model. Override with --chat-model.
-  const models = (await ollama.listModels()).map(m => m.name);
-  const PREFER = ['qwen2.5:7b', 'llama3.2', 'qwen2.5', 'llama3.1', 'llama3', 'mistral:latest', 'mistral', 'gemma2', 'phi'];
+  const models = (await llamacpp.listModels()).map(m => m.name);
+  const PREFER = ['qwen2.5-7b', 'llama-3.2', 'qwen2.5', 'llama-3.1', 'llama-3', 'mistral', 'gemma-2', 'phi'];
   const chatModel = opt('chat-model',
     PREFER.map(p => models.find(n => n.toLowerCase().includes(p) && !isEmbedName(n))).find(Boolean)
     || models.find(n => !isEmbedName(n)) || '');
@@ -174,17 +180,15 @@ async function run() {
   let pf = null;
   if (chatModel) {
     // A unique nonce at the very start forces a true cold prefill each time —
-    // otherwise Ollama's prompt KV-cache would reuse the identical (deterministic)
-    // prompt from a prior run and report a near-zero prompt_eval time.
+    // otherwise a prompt KV-cache would reuse the identical (deterministic)
+    // prompt from a prior run and report a near-zero prompt time.
     const nonce = () => `[bench ${Date.now()}-${Math.random().toString(36).slice(2)}]\n`;
     const retrSys = await buildSystem(proj, [], emptyChat, 'Who was the lighthouse keeper?');
     const dumpSys = 'Ground answers in this document:\n' + fs.readFileSync(bigFile, 'utf8').slice(0, FILE_LIMIT);
-    // free the embed model from VRAM (keep_alive:0) so the chat-model prefill
-    // isn't measured under GPU contention right after heavy embedding
-    try {
-      await fetch(`${OLLAMA}/api/embed`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: embedModel, input: 'x', keep_alive: 0 }) });
-    } catch { /* best effort */ }
+    // The embed and chat models run as two independent llama-server processes
+    // (see lib/llamacpp.js), so — unlike Ollama's single shared runner — both
+    // stay resident in VRAM at once; there's nothing to unload here. Just let
+    // the heavy embedding work above settle before timing prefill.
     await new Promise(r => setTimeout(r, 2000));
     await prefill(chatModel, 'hi', 'hi').catch(() => {}); // warm/load the model
     const pr = await prefill(chatModel, nonce() + retrSys, 'Who was the lighthouse keeper?');
@@ -193,7 +197,7 @@ async function run() {
     console.log(`  prefill: retrieval ${fmtDur(pr.ms)} (${pr.tokens} tok) vs dump ${fmtDur(pd.ms)} (${pd.tokens} tok)`);
   }
 
-  return { rows, longRows, pf, machine: machineLine(embedModel, chatModel || '—', ollamaVer), embedModel, chatModel, when: new Date().toISOString().slice(0, 10) };
+  return { rows, longRows, pf, machine: machineLine(embedModel, chatModel || '—'), embedModel, chatModel, when: new Date().toISOString().slice(0, 10) };
 }
 
 function renderMarkdown(d) {
@@ -204,7 +208,7 @@ function renderMarkdown(d) {
   const ratioLo = Math.round(Math.min(...ratios)), ratioHi = Math.round(Math.max(...ratios));
 
   const L = [];
-  L.push(`Measured end-to-end against a live Ollama on a sample laptop — ${d.machine}. Timings come from Ollama's own \`prompt_eval_duration\`.`);
+  L.push(`Measured end-to-end against a live llama.cpp backend on a sample laptop — ${d.machine}. Timings come from llama.cpp's own \`timings\` (fallback: wall-clock).`);
   L.push('');
   L.push('**Retrieval by file size** — chunk + embed once, then rank per question:');
   L.push('');
@@ -242,7 +246,7 @@ function renderMarkdown(d) {
   L.push(`The system prompt stays constant as the conversation grows. With the old dump it would pin the system at ~${commas(big.dumpTokens / 1000)}k tokens, so a long chat overflows the ${commas(CTX / 1024)}k window and older messages get trimmed.`);
 
   L.push('');
-  L.push(`> **Caveats.** The *first* index of a huge file scales with size (~${fmtDur(big.buildMs)} for the ${fmtMB(big.size)} file; one-time, cached until it changes). The index stores the chunked source **text** in plaintext under the data dir — gitignored, removed when you detach the attachment, and size-capped; \`MONKII_RETRIEVAL=off\` avoids it. Vectors are a sibling raw-binary Float32 file, not JSON-encoded text; a full index pair (text + vectors) currently runs ~${ratioLo}–${ratioHi}× the source (${fmtMB(big.indexBytes)} for the ${fmtMB(big.size)} doc). Warm-SSD read caching saves only sub-millisecond per message; the cache that matters is the index.`);
+  L.push(`> **Caveats.** The *first* index of a huge file scales with size (~${fmtDur(big.buildMs)} for the ${fmtMB(big.size)} file; one-time, cached until it changes). The index stores the chunked source **text** in plaintext under the data dir — gitignored, removed when you detach the attachment, and size-capped; \`MECHAPE_RETRIEVAL=off\` avoids it. Vectors are a sibling raw-binary Float32 file, not JSON-encoded text; a full index pair (text + vectors) currently runs ~${ratioLo}–${ratioHi}× the source (${fmtMB(big.indexBytes)} for the ${fmtMB(big.size)} doc). Warm-SSD read caching saves only sub-millisecond per message; the cache that matters is the index.`);
   L.push('');
   L.push(`<sub>Auto-generated by \`npm run bench\` · last measured ${d.when}.</sub>`);
   return L.join('\n');

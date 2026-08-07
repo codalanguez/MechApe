@@ -4,20 +4,23 @@
  * Turns the loopback web app into a native desktop application (the way the
  * ComfyUI desktop app wraps its local Python server). On launch it:
  *
- *   1. makes sure Ollama is running (starts `ollama serve` if not),
- *   2. forks server.js on a free port using Electron's bundled Node,
+ *   1. downloads + SHA256-verifies the llama-server binary if needed, and
+ *      picks free ports for the chat and embed instances,
+ *   2. forks server.js on a free port using Electron's bundled Node (which,
+ *      once running, spawns those llama-server instances itself on demand —
+ *      see lib/llamacpp.js),
  *   3. waits for the HTTP server to answer, then
  *   4. loads it in a BrowserWindow, showing a themed splash while it boots.
  *
  * The Express server is used completely unmodified — `npm start` still runs
- * it headless. Everything desktop-specific lives in this folder, one module
- * per concern:
+ * it headless (pointed at manually-started llama-server instances). Everything
+ * desktop-specific lives in this folder, one module per concern:
  *
  *   runtime.js    shared state (window, server process, port)
  *   settings.js   settings.json + storage-location resolution
  *   dialogs.js    native-dialog helpers
- *   ollama.js     starting Ollama + the models-folder question
- *   server.js     fork/wait/restart of the Express server
+ *   llamacpp.js   downloading + verifying the llama-server binary
+ *   server.js     fork/wait/restart of the Express server + llama PID tracking
  *   menu.js       app menu with live Projects & Skills submenus
  *   prefs-ipc.js  Preferences IPC (validated senders)
  *   preload.js    contextBridge exposed to the web UI
@@ -27,29 +30,44 @@ const path = require('path');
 const fs = require('fs');
 
 const runtime = require('./runtime');
-const { ensureOllama } = require('./ollama');
-const { findFreePort, waitForServer, startServer } = require('./server');
+const { ensureLlamaCppBinary } = require('./llamacpp');
+const { findFreePort, waitForServer, startServer, killTrackedLlamaProcesses } = require('./server');
 const { buildMenu } = require('./menu');
 const { registerPrefsIpc } = require('./prefs-ipc');
 
+/* Every name this app has shipped under, newest first. Each rename moves
+ * per-user storage (productName decides the %APPDATA% folder), so a launch
+ * under the current name has to go looking for whatever the last one left
+ * behind. These are deliberately hard-coded historical strings — they must
+ * NOT be renamed along with the product, or an upgrade silently starts with
+ * an empty library. */
+const LEGACY_APP_NAMES = ['Monkii', 'CodeMonkii'];
+
 /**
- * One-time data migration for the CodeMonkii → Monkii rebrand. The productName
- * change moves per-user storage from %APPDATA%\CodeMonkii to %APPDATA%\Monkii,
- * so on first Monkii launch — if a prior CodeMonkii install exists — copy the
- * projects, skills, settings, and logs over so nothing is orphaned.
+ * One-time data migration across the app's renames (CodeMonkii → Monkii →
+ * MechApe). On first launch under a new name, copy the previous install's
+ * projects, skills, settings, logs, and downloaded runtime across so nothing
+ * is orphaned — including the OpenRouter key, which is OS-encrypted to this
+ * user and stays decryptable because it's the same machine.
  *
- * Copies file-by-file, never overwriting anything the new install already has,
- * and only writes the `.migrated` marker if every file copied cleanly — so a
- * partial run (e.g. a momentarily locked file) is retried on the next launch
- * rather than silently leaving data behind. Runs before storage paths are read.
+ * Takes the newest legacy folder that actually exists, copies file-by-file,
+ * never overwrites anything the new install already has, and only writes the
+ * `.migrated` marker if every file copied cleanly — so a partial run (a
+ * momentarily locked file, an antivirus holding a binary) is retried next
+ * launch rather than silently leaving data behind. Runs before storage paths
+ * are read.
  */
 function migrateLegacyData() {
   if (!app.isPackaged) return; // dev keeps its data repo-local
   try {
-    const oldDir = path.join(app.getPath('appData'), 'CodeMonkii');
-    const newDir = app.getPath('userData'); // %APPDATA%\Monkii
+    const newDir = app.getPath('userData'); // %APPDATA%\MechApe
     const marker = path.join(newDir, '.migrated');
-    if (!fs.existsSync(oldDir) || fs.existsSync(marker)) return;
+    if (fs.existsSync(marker)) return;
+
+    const oldDir = LEGACY_APP_NAMES
+      .map(name => path.join(app.getPath('appData'), name))
+      .find(dir => fs.existsSync(dir));
+    if (!oldDir) return;
 
     let failures = 0;
     const copyInto = (src, dst) => {
@@ -61,10 +79,13 @@ function migrateLegacyData() {
         try { fs.copyFileSync(src, dst); } catch { failures++; }
       }
     };
-    for (const item of ['data', 'skills', 'settings.json', 'logs']) {
+    // `runtime` carries the verified llama.cpp builds — worth bringing over so
+    // an opted-in CUDA install isn't re-downloaded after a rename
+    for (const item of ['data', 'skills', 'settings.json', 'logs', 'runtime']) {
       copyInto(path.join(oldDir, item), path.join(newDir, item));
     }
     if (failures === 0) fs.writeFileSync(marker, new Date().toISOString());
+    console.log(`[mechape] migrated data from ${path.basename(oldDir)} -> ${path.basename(newDir)}`);
   } catch { /* best-effort: a failed migration just retries; no data lost */ }
 }
 
@@ -76,7 +97,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0d0b14',
     show: false,
-    title: 'Monkii',
+    title: 'MechApe',
     icon: runtime.IS_WINDOWS ? path.join(__dirname, 'build', 'icon.ico') : undefined,
     webPreferences: {
       contextIsolation: true,
@@ -91,7 +112,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'loading.html'));
   win.once('ready-to-show', () => win.show());
 
-  // Open external links (docs, ollama.com, etc.) in the real browser.
+  // Open external links (docs, huggingface.co, etc.) in the real browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (!runtime.isAppUrl(url)) {
       if (/^https?:/i.test(url)) shell.openExternal(url);
@@ -132,21 +153,72 @@ function createWindow() {
   win.on('closed', () => { runtime.win = null; });
 }
 
+const fmtMB = (n) => `${Math.round(n / 1048576)} MB`;
+
+/**
+ * Narrate first-run backend setup on the splash screen.
+ *
+ * Without this the very first launch sits on a static splash for minutes
+ * while a 250 MB build downloads and unpacks, with nothing to distinguish
+ * "working" from "hung" — which is exactly how it read the first time it was
+ * run for real. Writes into the splash's own `.sub` line; harmless no-op
+ * once the real UI has loaded over it.
+ */
+function reportSetupProgress(p) {
+  const win = runtime.win;
+  if (!win || win.isDestroyed()) return;
+  let text;
+  if (p.status === 'downloading' && p.total) text = `Downloading local model runtime — ${Math.round((p.completed / p.total) * 100)}% of ${fmtMB(p.total)}`;
+  else if (p.status === 'downloading') text = 'Downloading local model runtime…';
+  else if (p.status === 'unpacking') text = 'Unpacking local model runtime — this takes a minute';
+  else text = p.status.charAt(0).toUpperCase() + p.status.slice(1) + '…';
+  win.webContents.executeJavaScript(
+    `(() => { const el = document.querySelector('.sub'); if (el) el.textContent = ${JSON.stringify(text)}; })()`,
+  ).catch(() => { /* splash already replaced by the app */ });
+}
+
 async function boot() {
-  migrateLegacyData(); // carry data over from a prior CodeMonkii install
+  migrateLegacyData(); // carry data over from an install under a previous name
   buildMenu();
   createWindow();
 
   runtime.serverPort = await findFreePort(runtime.PREFERRED_PORT);
-  await ensureOllama();
-  startServer(runtime.serverPort);
+
+  // Resolve (downloading + SHA256-verifying on first run) the llama-server
+  // binary and pick two more free loopback ports for the chat/embed
+  // instances the forked server will spawn on demand — never block window
+  // creation on this; a download failure surfaces as "backend unreachable"
+  // in the UI (same as Ollama-not-running used to), not a hard crash.
+  try {
+    // three independent operations — the binary download/verify (the slow
+    // one, minutes on a first run: the Windows CUDA build is a 250 MB
+    // archive) doesn't need to wait on two cheap local port picks
+    const [backend, chatPort, embedPort] = await Promise.all([
+      ensureLlamaCppBinary(reportSetupProgress),
+      findFreePort(8114),
+      findFreePort(8115),
+    ]);
+    runtime.llamacppEnv = {
+      MECHAPE_LLAMACPP_BIN: backend.bin,
+      MECHAPE_LLAMACPP_VARIANT: backend.variant,
+      // e.g. "Vulkan1" — without this llama.cpp offloads to device 0, which
+      // on a laptop is usually the integrated GPU, not the discrete card
+      MECHAPE_LLAMACPP_DEVICE: backend.device ? backend.device.id : '',
+      MECHAPE_LLAMACPP_CHAT_URL: `http://127.0.0.1:${chatPort}`,
+      MECHAPE_LLAMACPP_EMBED_URL: `http://127.0.0.1:${embedPort}`,
+    };
+  } catch (e) {
+    dialog.showErrorBox('MechApe', `Could not set up the local model backend:\n\n${e.message}\n\nMechApe will still start, but local chat won't work until this is resolved (check your internet connection and try again).`);
+    runtime.llamacppEnv = {};
+  }
+  startServer(runtime.serverPort, runtime.llamacppEnv);
 
   try {
     await waitForServer(runtime.serverPort);
     if (runtime.win) await runtime.win.loadURL(runtime.appUrl());
     buildMenu(); // now with live projects & skills
   } catch (e) {
-    dialog.showErrorBox('Monkii', `Could not reach the app server.\n\n${e.message}`);
+    dialog.showErrorBox('MechApe', `Could not reach the app server.\n\n${e.message}`);
     app.quit();
   }
 }
@@ -178,8 +250,14 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => { app.isQuitting = true; });
 
   app.on('quit', () => {
+    // Unlike the old Ollama integration (left running deliberately — it was
+    // a shared system daemon other tools might use), the llama-server
+    // instances are MechApe's own private processes: kill them explicitly so
+    // nothing lingers after the app closes. Order matters: the tracked-PID
+    // kill must run before (or without depending on) the forked server,
+    // since killing that server on Windows won't let it clean up its own
+    // children — see the comment in electron/server.js.
+    killTrackedLlamaProcesses();
     try { runtime.serverProc?.kill(); } catch {}
-    // Ollama we started is left running deliberately: models stay warm and
-    // other local tools may be using it (same behavior as the .cmd launcher).
   });
 }

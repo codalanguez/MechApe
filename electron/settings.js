@@ -2,15 +2,18 @@
  * settings.js — persisted preferences and storage-location resolution.
  *
  * Settings live in a small JSON file in Electron's per-user data dir
- * (e.g. %APPDATA%\Monkii\settings.json). Keys:
- *   modelsDir — 'default' (Ollama's own ~/.ollama/models) or an absolute path
- *   dataDir   — where projects & chats are stored (absent = default)
- *   skillsDir — where skills are scanned from   (absent = default)
+ * (e.g. %APPDATA%\MechApe\settings.json). Keys:
+ *   modelsDir — where downloaded .gguf files live (absent = default)
+ *   dataDir   — where projects & chats are stored  (absent = default)
+ *   skillsDir — where skills are scanned from       (absent = default)
+ *   llamacppVariant — 'cuda' | 'cpu' | 'auto', remembered after the first
+ *     successful (or failed) launch so MechApe doesn't re-probe every boot
+ *     (see electron/llamacpp.js)
  *
- * Data & skills locations resolve in priority order:
- *   1. MONKII_DATA_DIR / MONKII_SKILLS_DIR env vars — always win;
+ * Storage locations resolve in priority order:
+ *   1. MECHAPE_DATA_DIR / MECHAPE_SKILLS_DIR / MECHAPE_MODELS_DIR env vars — always win;
  *   2. folders picked in the in-app Preferences panel (saved here);
- *   3. defaults — %APPDATA%\Monkii when installed (the install folder is
+ *   3. defaults — %APPDATA%\MechApe when installed (the install folder is
  *      replaced wholesale on every update, so user data can't live there),
  *      repo-local in dev, same as `npm start`.
  */
@@ -19,6 +22,15 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const runtime = require('./runtime');
+
+/* Same MECHAPE_* -> MONKII_* fallback lib/config.js applies, so the shell and
+ * the server agree about which env overrides are in force. Without it a
+ * pre-rename MONKII_DATA_DIR would still steer the server while Preferences
+ * showed the folder as user-editable — two answers to the same question. */
+function env(name) {
+  const v = process.env[`MECHAPE_${name}`];
+  return v !== undefined ? v : process.env[`MONKII_${name}`];
+}
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
 
@@ -39,6 +51,7 @@ function defaultStorage() {
   return {
     dataDir: path.join(base, 'data', 'projects'),
     skillsDir: path.join(base, 'skills'),
+    modelsDir: path.join(base, 'data', 'models'),
   };
 }
 
@@ -46,18 +59,19 @@ function effectiveStorage() {
   const s = loadSettings();
   const d = defaultStorage();
   return {
-    dataDir: process.env.MONKII_DATA_DIR || s.dataDir || d.dataDir,
-    skillsDir: process.env.MONKII_SKILLS_DIR || s.skillsDir || d.skillsDir,
+    dataDir: env('DATA_DIR') || s.dataDir || d.dataDir,
+    skillsDir: env('SKILLS_DIR') || s.skillsDir || d.skillsDir,
+    modelsDir: env('MODELS_DIR') || s.modelsDir || d.modelsDir,
   };
 }
 
 /** Logs live beside the per-user data when installed, repo-local in dev. */
 function logDir() {
   const base = app.isPackaged ? app.getPath('userData') : runtime.APP_ROOT;
-  return process.env.MONKII_LOG_DIR || path.join(base, 'logs');
+  return env('LOG_DIR') || path.join(base, 'logs');
 }
 
-/* Filesystem allowlist (MONKII_FS_ROOTS). The desktop app fences browsing and
+/* Filesystem allowlist (MECHAPE_FS_ROOTS). The desktop app fences browsing and
  * attachment reads to your home folder by default; widen it in Preferences.
  * The `fsRoots` setting is either an array of allowed folders, the string 'all'
  * (whole disk), or absent (default = home). The ambient env var always wins. */
@@ -65,7 +79,7 @@ function fsRootsSetting() { return loadSettings().fsRoots; }
 
 /** Effective allowed folders. An empty array means the whole disk (no fence). */
 function fsRootsList() {
-  const env = process.env.MONKII_FS_ROOTS;
+  const env = env('FS_ROOTS');
   if (env !== undefined) return env.split(';').map(s => s.trim()).filter(Boolean);
   const s = fsRootsSetting();
   if (s === 'all') return [];
@@ -74,17 +88,11 @@ function fsRootsList() {
 }
 const fsWholeDisk = () => fsRootsList().length === 0;
 
-/** The MONKII_FS_ROOTS value handed to the forked server (ambient env wins;
+/** The MECHAPE_FS_ROOTS value handed to the forked server (ambient env wins;
  * otherwise the effective list, where [] means whole disk → empty string). */
 function fsRootsEnvValue() {
-  return (process.env.MONKII_FS_ROOTS !== undefined) ? process.env.MONKII_FS_ROOTS : fsRootsList().join(';');
+  return (env('FS_ROOTS') !== undefined) ? env('FS_ROOTS') : fsRootsList().join(';');
 }
-
-/* Daily Ollama update check — opt-in, off unless the user enables it (or the
- * ambient env var forces it). */
-const updateCheckEnabled = () => (process.env.MONKII_UPDATE_CHECK !== undefined)
-  ? process.env.MONKII_UPDATE_CHECK.toLowerCase() === 'on'
-  : Boolean(loadSettings().updateCheck);
 
 /* ---- OpenRouter API key (optional remote backend) ----
  * Stored OS-encrypted via Electron's safeStorage (DPAPI on Windows) so the
@@ -98,7 +106,7 @@ function setOpenRouterKey(key) {
 }
 
 function openrouterKey() {
-  if (process.env.MONKII_OPENROUTER_KEY !== undefined) return process.env.MONKII_OPENROUTER_KEY;
+  if (env('OPENROUTER_KEY') !== undefined) return env('OPENROUTER_KEY');
   const enc = loadSettings().openrouterKey;
   if (!enc) return '';
   try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); }
@@ -109,14 +117,14 @@ const openrouterConfigured = () => Boolean(openrouterKey());
 
 /* Remote privacy routing: 'deny' (default) = only providers that don't log or
  * train on prompts; 'allow' widens provider choice. Ambient env wins. */
-const orDataCollection = () => (process.env.MONKII_OR_DATA_COLLECTION !== undefined)
-  ? (process.env.MONKII_OR_DATA_COLLECTION.toLowerCase() === 'allow' ? 'allow' : 'deny')
+const orDataCollection = () => (env('OR_DATA_COLLECTION') !== undefined)
+  ? (env('OR_DATA_COLLECTION').toLowerCase() === 'allow' ? 'allow' : 'deny')
   : (loadSettings().orAllowLogging ? 'allow' : 'deny');
 
 /** Env block handed to the forked server. Seeds the bundled sample skills
  *  into a fresh skills folder when packaged (never overwriting files). */
 function storageEnv() {
-  const { dataDir, skillsDir } = effectiveStorage();
+  const { dataDir, skillsDir, modelsDir } = effectiveStorage();
   if (app.isPackaged && !fs.existsSync(skillsDir)) {
     try {
       fs.cpSync(path.join(runtime.APP_ROOT, 'skills'), skillsDir, {
@@ -125,18 +133,19 @@ function storageEnv() {
     } catch { try { fs.mkdirSync(skillsDir, { recursive: true }); } catch {} }
   }
   return {
-    MONKII_DATA_DIR: dataDir,
-    MONKII_SKILLS_DIR: skillsDir,
-    MONKII_LOG_DIR: logDir(),
-    MONKII_FS_ROOTS: fsRootsEnvValue(),
-    MONKII_UPDATE_CHECK: updateCheckEnabled() ? 'on' : 'off',
-    MONKII_OPENROUTER_KEY: openrouterKey(),
-    MONKII_OR_DATA_COLLECTION: orDataCollection(),
+    MECHAPE_DATA_DIR: dataDir,
+    MECHAPE_SKILLS_DIR: skillsDir,
+    MECHAPE_MODELS_DIR: modelsDir,
+    MECHAPE_LOG_DIR: logDir(),
+    MECHAPE_FS_ROOTS: fsRootsEnvValue(),
+    MECHAPE_OPENROUTER_KEY: openrouterKey(),
+    MECHAPE_OR_DATA_COLLECTION: orDataCollection(),
   };
 }
 
 module.exports = {
+  env,
   loadSettings, saveSettings, defaultStorage, effectiveStorage, storageEnv, logDir,
-  fsRootsList, fsWholeDisk, updateCheckEnabled,
+  fsRootsList, fsWholeDisk,
   setOpenRouterKey, openrouterConfigured, orDataCollection,
 };

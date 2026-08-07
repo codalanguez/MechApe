@@ -1,0 +1,226 @@
+# Build and code-sign a MechApe release.
+#
+# Signing is done by SignPath Foundation, which gives OSS projects a free
+# code-signing certificate. The whole reason this exists is documented in
+# docs/SIGNING.md: an unsigned installer that drops an unsigned, socket-
+# listening llama-server.exe onto disk looks exactly like a malware dropper
+# to a heuristic scanner, and at least one (Avast) acted on that during
+# development. A signature is the only thing that actually fixes it.
+#
+# SignPath will only sign artifacts it can trace to a trusted build — it
+# pulls the artifact from this workflow run via the GitHub API rather than
+# accepting an upload. That is why the build must happen here and not on a
+# developer's machine.
+#
+# Two signing passes, on purpose:
+#
+#   1. the unpacked app, so every PE inside it is signed — including
+#      llama-server.exe and the ggml/CUDA DLLs beside it, which are the
+#      files scanners actually object to
+#   2. the NSIS installer built from those already-signed files
+#
+# Signing only the installer would leave the binary that gets quarantined
+# unsigned on disk after install, which defeats the point.
+#
+# Until the SignPath application is approved, SIGNPATH_API_TOKEN will not
+# exist and both passes are skipped: the workflow still builds and still
+# publishes, just unsigned and labelled as such. That keeps releases
+# possible while the application is pending.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Create a GitHub release (otherwise just build artifacts)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the release and upload assets to it
+  actions: read     # SignPath fetches the build artifact through this
+
+env:
+  # electron-builder must not try to sign locally — there is no certificate
+  # on the runner, and its auto-discovery otherwise emits confusing warnings.
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "version $pkg"
+
+      # Downloads the pinned llama.cpp builds and verifies each against the
+      # SHA256 digest GitHub reports for the asset. See scripts/fetch-runtime.js.
+      - name: Fetch and verify the llama.cpp runtime
+        run: npm run runtime
+
+      # Stage 1 — unpacked app only. buildDate is baked in here because
+      # extraMetadata rewrites the packaged package.json, which stage 2
+      # (--prepackaged) no longer touches.
+      - name: Build the unpacked app
+        shell: bash
+        run: npx electron-builder --win --dir -c.extraMetadata.buildDate=$(date -u +%Y-%m-%d)
+
+      # The token goes through the environment rather than being interpolated
+      # into the command line: ${{ secrets.* }} in a `run:` string is expanded
+      # before the shell ever sees it, which puts the value in the process
+      # arguments. Masking hides it from the log, not from the process table.
+      - name: Detect whether signing is configured
+        id: signing
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "$SIGNPATH_API_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SIGNPATH_API_TOKEN is not set — publishing UNSIGNED. See docs/SIGNING.md."
+          fi
+
+      # ---- pass 1: sign every binary inside the app ----
+
+      - name: Package the unpacked app for signing
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath mechape-unpacked.zip
+
+      - name: Upload unpacked app for SignPath
+        if: steps.signing.outputs.enabled == 'true'
+        id: upload-unpacked
+        uses: actions/upload-artifact@v4
+        with:
+          name: mechape-unpacked
+          path: mechape-unpacked.zip
+          retention-days: 1
+
+      - name: Sign the app binaries
+        if: steps.signing.outputs.enabled == 'true'
+        uses: SignPath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: unpacked-app
+          github-artifact-id: ${{ steps.upload-unpacked.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-app
+
+      # Overwrite the unpacked tree with the signed binaries, so the installer
+      # built next contains signed files rather than the originals.
+      - name: Replace binaries with their signed copies
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem signed-app -Filter *.zip | Select-Object -First 1
+          if (-not $zip) { throw "SignPath returned no zip in signed-app/" }
+          Expand-Archive -Path $zip.FullName -DestinationPath dist/win-unpacked -Force
+
+          # Prove the signature actually landed on the binary this whole
+          # exercise is about, rather than assuming the round-trip worked.
+          $server = Get-ChildItem dist/win-unpacked -Recurse -Filter llama-server.exe |
+                    Select-Object -First 1
+          if (-not $server) { throw "llama-server.exe not found in the unpacked app" }
+          $sig = Get-AuthenticodeSignature $server.FullName
+          "llama-server.exe: $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "llama-server.exe is not validly signed: $($sig.Status)" }
+
+      # ---- stage 2: the installer, built from whatever is now on disk ----
+
+      - name: Build the installer
+        run: npx electron-builder --win nsis --prepackaged dist/win-unpacked
+
+      - name: Find the installer
+        id: installer
+        shell: bash
+        run: echo "path=$(ls dist/*.exe | head -1)" >> "$GITHUB_OUTPUT"
+
+      # ---- pass 2: sign the installer itself ----
+
+      - name: Upload installer for SignPath
+        if: steps.signing.outputs.enabled == 'true'
+        id: upload-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mechape-installer-unsigned
+          path: ${{ steps.installer.outputs.path }}
+          retention-days: 1
+
+      - name: Sign the installer
+        if: steps.signing.outputs.enabled == 'true'
+        uses: SignPath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+
+      - name: Collect the artifact to publish
+        id: final
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ steps.signing.outputs.enabled }}" = "true" ]; then
+            cp signed-installer/*.exe out/
+          else
+            cp "${{ steps.installer.outputs.path }}" out/
+          fi
+          echo "path=$(ls out/*.exe | head -1)" >> "$GITHUB_OUTPUT"
+
+      # SHA256 lets people verify the download independently of the signature.
+      - name: Checksum
+        shell: bash
+        run: |
+          cd out
+          sha256sum *.exe | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mechape-installer
+          path: out/*
+
+      # Drafted rather than published outright, so the installer can be
+      # smoke-tested on a real machine before anyone can download it.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          draft: true
+          generate_release_notes: true
+          body: ${{ steps.signing.outputs.enabled == 'true' && 'Signed by SignPath Foundation. Verify with `Get-AuthenticodeSignature <installer>.exe`, or check the download against SHA256SUMS.txt.' || '**This build is unsigned** — SignPath is not configured yet, so Windows SmartScreen will warn on launch. Check the download against SHA256SUMS.txt.' }}

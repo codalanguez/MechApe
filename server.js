@@ -9,17 +9,16 @@
  *   lib/config.js       env + constants          routes/projects.js  projects/chats/attachments CRUD
  *   lib/security.js     host/origin/CSP + fs allowlist   routes/skills.js    skill listing
  *   lib/store.js        project JSON persistence  routes/fs.js        file-browser listings
- *   lib/skills.js       SKILL.md parsing          routes/ollama.js    health/models/update/chat stream
+ *   lib/skills.js       SKILL.md parsing          routes/models.js    health/models/chat stream
  *   lib/attachments.js  reading knowledge from disk   routes/search.js    search across projects/chats/messages
  *   lib/prompt.js       system prompt assembly
- *   lib/ollama.js       Ollama HTTP client + update check
+ *   lib/llamacpp.js     llama.cpp server HTTP client
  */
 const path = require('path');
 const express = require('express');
 
-const { PORT, OLLAMA, SKILLS_DIR, ROOT } = require('./lib/config');
+const { PORT, LLAMACPP_CHAT_URL, LLAMACPP_EMBED_URL, SKILLS_DIR, ROOT } = require('./lib/config');
 const { securityMiddleware } = require('./lib/security');
-const { checkOllamaUpdate } = require('./lib/ollama');
 const { logError, logInfo, LOG_DIR } = require('./lib/log');
 
 // last-resort logging so nothing dies silently
@@ -36,7 +35,7 @@ app.use('/api', require('./routes/projects'));
 app.use('/api', require('./routes/skills'));
 app.use('/api', require('./routes/fs'));
 app.use('/api', require('./routes/search'));
-app.use('/api', require('./routes/ollama'));
+app.use('/api', require('./routes/models'));
 app.use('/api', require('./routes/backup'));
 
 /* JSON error handler — no stack traces to the client, but log the real one */
@@ -50,13 +49,10 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '127.0.0.1', () => {
-  console.log(`Monkii running at http://localhost:${PORT}`);
-  console.log(`Ollama host: ${OLLAMA}`);
+  console.log(`MechApe running at http://localhost:${PORT}`);
+  console.log(`llama.cpp chat:  ${LLAMACPP_CHAT_URL}`);
+  console.log(`llama.cpp embed: ${LLAMACPP_EMBED_URL}`);
   console.log(`Skills dir:  ${SKILLS_DIR}`);
   console.log(`Logs dir:    ${LOG_DIR}`);
   logInfo('server started', `port ${PORT}`);
-  checkOllamaUpdate().then(u => {
-    if (u.updateAvailable) console.log(`Ollama update available: ${u.current} -> ${u.latest} (${u.url})`);
-    else if (u.current) console.log(`Ollama ${u.current} is up to date`);
-  });
 });

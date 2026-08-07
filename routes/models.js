@@ -1,37 +1,36 @@
 /**
- * routes/ollama.js — model endpoints: health, model list, update check, and
- * the streaming chat itself.
+ * routes/models.js — model endpoints: health, model list, and the streaming
+ * chat itself.
  *
  * The chat handler is the heart of the app: it appends the user message,
  * builds the full system prompt (instructions + skills + live attachments),
- * pipes Ollama's NDJSON stream straight through to the browser while
+ * pipes the backend's NDJSON stream straight through to the browser while
  * accumulating the reply server-side, and persists whatever arrived — even
  * if the user hit Stop mid-generation.
  */
 const express = require('express');
-const { OLLAMA, HISTORY_LIMIT, DEFAULT_CONTEXT, EMBED_MODEL_DEFAULT, EMBED_MODEL_SIZE, CHAT_MODEL_DEFAULT, CHAT_MODEL_SIZE } = require('../lib/config');
+const { HISTORY_LIMIT, DEFAULT_CONTEXT, EMBED_MODEL_DEFAULT, EMBED_MODEL_SIZE, CHAT_MODEL_DEFAULT, CHAT_MODEL_SIZE } = require('../lib/config');
 const { loadProject, saveProject } = require('../lib/store');
 const { sanitizeOptions } = require('../lib/options');
 const { buildSystem } = require('../lib/prompt');
 const { estimateTokens } = require('../lib/tokens');
 const { logError } = require('../lib/log');
 const { pipeNdjson } = require('../lib/stream');
-const ollama = require('../lib/ollama');
+const llamacpp = require('../lib/llamacpp');
 const openrouter = require('../lib/openrouter');
 const { embedStatus, isEmbedName, indexStatusFor } = require('../lib/retrieval');
 const pkg = require('../package.json');
 
 const router = express.Router();
 
-/* A dropped/reset connection to Ollama's model runner — or an explicit
- * out-of-memory — almost always means the runner crashed, usually because the
- * KV cache for the chosen context length didn't fit the GPU. Ollama surfaces
- * this as cryptic socket text ("wsarecv: ... forcibly closed", "connection
- * reset", "llama runner process has terminated"); translate any of them into
- * one honest, actionable message. */
+/* A dropped/reset connection to the chat instance — or an explicit
+ * out-of-memory — almost always means the llama-server process crashed,
+ * usually because the KV cache for the chosen context length didn't fit the
+ * GPU. Translate the raw socket/allocator text into one honest, actionable
+ * message. */
 // keep RUNNER_CRASH_RE in sync with public/js/chat.js (server catches
 // load-time crashes; the client copy catches mid-generation ones).
-const RUNNER_CRASH_RE = /wsarecv|forcibly closed|connection reset|econnreset|broken pipe|runner (process )?has terminated|llama runner|exit status|unexpected eof|out of memory|cudamalloc|cuda error|insufficient memory|failed to allocate/i;
+const RUNNER_CRASH_RE = /wsarecv|forcibly closed|connection reset|econnreset|broken pipe|process (has )?terminated|exit status|unexpected eof|out of memory|cudamalloc|cuda error|insufficient memory|failed to allocate/i;
 const looksLikeRunnerCrash = (s) => typeof s === 'string' && RUNNER_CRASH_RE.test(s);
 
 /* Format a context length for a message: 16384 → "16k", 900 → "900". */
@@ -47,26 +46,28 @@ function runnerCrashMessage(model, ctxN) {
  * package.json by scripts/build-info.js; absent in a dev checkout. */
 router.get('/about', (req, res) => {
   res.json({
-    name: 'Monkii',
+    name: 'MechApe',
     version: pkg.version,
     buildDate: pkg.buildDate || null,
-    repo: 'https://github.com/codalanguez/Monkii',
+    repo: 'https://github.com/codalanguez/MechApe',
   });
 });
 
 router.get('/health', async (req, res) => {
   try {
-    res.json({ ok: true, ollama: OLLAMA, version: await ollama.getVersion() });
+    const version = await llamacpp.getVersion();
+    // accel is null in headless mode (we didn't launch it, so we'd be guessing)
+    res.json({ ok: true, version, accel: llamacpp.currentAccel() });
   } catch {
-    res.json({ ok: false, ollama: OLLAMA });
+    res.json({ ok: false });
   }
 });
 
 router.get('/models', async (req, res) => {
   try {
-    res.json({ models: await ollama.listModels() });
+    res.json({ models: await llamacpp.listModels() });
   } catch {
-    res.status(502).json({ error: `Cannot reach Ollama at ${OLLAMA}. Is it running?` });
+    res.status(502).json({ error: 'Cannot reach the local model server. Is MechApe\'s llama.cpp backend running?' });
   }
 });
 
@@ -74,21 +75,22 @@ router.get('/models', async (req, res) => {
 router.get('/models/info', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
   if (!name) return res.status(400).json({ error: 'model name required' });
-  try { res.json(await ollama.showModel(name)); }
-  catch { res.status(502).json({ error: 'cannot reach Ollama or model not found' }); }
+  try { res.json(await llamacpp.showModel(name)); }
+  catch (e) { res.status(502).json({ error: String(e.message || e) || 'model not found' }); }
 });
 
-/* Stream a model pull's progress (NDJSON) straight through to the browser. */
+/* Stream a model pull's progress (NDJSON) straight through to the browser.
+ * `name` is a "<hf-repo>[:quant]" spec, e.g. "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M". */
 router.post('/models/pull', async (req, res) => {
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
-  if (!name) return res.status(400).json({ error: 'model name required' });
+  if (!name) return res.status(400).json({ error: 'a Hugging Face repo (e.g. "owner/repo" or "owner/repo:Q4_K_M") is required' });
 
   const ac = new AbortController();
   res.on('close', () => { if (!res.writableEnded) ac.abort(); });
 
   let up;
-  try { up = await ollama.pullModel(name, ac.signal); }
-  catch (e) { logError(`model pull "${name}"`, e); return res.status(502).json({ error: `Cannot reach Ollama at ${OLLAMA}` }); }
+  try { up = await llamacpp.pullModel(name, ac.signal); }
+  catch (e) { logError(`model pull "${name}"`, e); return res.status(502).json({ error: String(e.message || e) || 'pull failed' }); }
   if (!up.ok) {
     const t = await up.text().catch(() => '');
     logError(`model pull "${name}"`, t || `status ${up.status}`);
@@ -97,23 +99,21 @@ router.post('/models/pull', async (req, res) => {
 
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
-  // Ollama reports pull failures as an {error} event inside a 200 stream — log
-  // it while still forwarding everything to the client.
+  // a download failure mid-stream arrives as an {error} event inside an
+  // otherwise-200 response — log it while still forwarding it to the client.
   try {
     await pipeNdjson(up, res, (o) => { if (o.error) logError(`model pull "${name}"`, o.error); });
   } catch (e) { if (!ac.signal.aborted) logError(`model pull stream "${name}"`, e); }
   res.end();
 });
 
-/* Delete a model. Name comes as a query param since it can contain "/" and ":". */
+/* Delete a model. Name comes as a query param since it can contain path-ish characters. */
 router.delete('/models', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
   if (!name) return res.status(400).json({ error: 'model name required' });
-  try { await ollama.deleteModel(name); res.json({ ok: true }); }
+  try { await llamacpp.deleteModel(name); res.json({ ok: true }); }
   catch (e) { logError(`model delete "${name}"`, e); res.status(400).json({ error: String(e.message || e) }); }
 });
-
-router.get('/update-check', async (req, res) => res.json(await ollama.checkOllamaUpdate()));
 
 /* ---- optional remote backend (OpenRouter) ---- */
 
@@ -167,7 +167,7 @@ router.get('/embed-status', async (req, res) => {
  * default to pull if not — so a clean install can start chatting immediately. */
 router.get('/chat-status', async (req, res) => {
   try {
-    const names = (await ollama.listModels()).map(m => m.name);
+    const names = (await llamacpp.listModels()).map(m => m.name);
     res.json({ hasChatModel: names.some(n => !isEmbedName(n)), recommended: CHAT_MODEL_DEFAULT, size: CHAT_MODEL_SIZE });
   } catch { res.json({ hasChatModel: false, recommended: CHAT_MODEL_DEFAULT, size: CHAT_MODEL_SIZE }); }
 });
@@ -273,27 +273,24 @@ router.post('/chat', async (req, res) => {
   // fires when the client disconnects mid-stream (req 'close' fires too early in modern Node)
   res.on('close', () => { if (!res.writableEnded) ac.abort(); });
 
-  // options come from the project's model settings; keep_alive is a top-level
-  // Ollama chat param, not an option, so split it out after sanitizing
+  // options come from the project's model settings
   const clean = sanitizeOptions(options);
-  const keepAlive = clean.keep_alive;
-  delete clean.keep_alive;
 
   let upstream;
   try {
     upstream = remote
       ? await openrouter.streamChat({ model, messages, options: clean, signal: ac.signal })
-      : await ollama.streamChat({ model, messages, options: clean, keepAlive, signal: ac.signal });
+      : await llamacpp.streamChat({ model, messages, options: clean, signal: ac.signal });
   } catch (e) {
     logError(`chat "${model}" — request failed`, e);
     if (remote) {
       return res.status(502).json({ error: 'Cannot reach OpenRouter — check your internet connection.' });
     }
-    // Distinguish "Ollama is down" from "the request failed while Ollama is up"
-    // — a dropped connection usually means the model runner crashed, most often
-    // out of memory from too high a context length for the GPU.
+    // Distinguish "the backend is down" from "the request failed while it was
+    // up" — a dropped connection usually means the chat instance crashed,
+    // most often out of memory from too high a context length for the GPU.
     let reachable = false;
-    try { await ollama.getVersion(); reachable = true; } catch { /* really down */ }
+    try { await llamacpp.getVersion(); reachable = true; } catch { /* really down */ }
     if (reachable) {
       const n = clean.num_ctx;
       const ctxNote = n ? ` (context length is ${fmtCtx(n)})` : '';
@@ -302,26 +299,27 @@ router.post('/chat', async (req, res) => {
           `Lower the context length in Model settings, or pick a smaller model.`,
       });
     }
-    return res.status(502).json({ error: `Cannot reach Ollama at ${OLLAMA}. Is it running?` });
+    return res.status(502).json({ error: 'Cannot reach the local model server. Is MechApe\'s llama.cpp backend running?' });
   }
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '');
     let detail = errText;
-    // Ollama errors are {error:"..."}; OpenRouter's are {error:{message}}
+    // both backends report {error:"..."} or {error:{message}}
     try {
       const parsed = JSON.parse(errText).error;
       detail = (parsed && parsed.message) || parsed || errText;
     } catch { /* raw */ }
-    logError(`chat "${model}" — ${remote ? 'OpenRouter' : 'Ollama'} ${upstream.status}`, detail);
+    logError(`chat "${model}" — ${remote ? 'OpenRouter' : 'llama.cpp'} ${upstream.status}`, detail);
     if (remote) {
       return res.status(502).json({ error: openrouterErrorMessage(upstream.status, detail) });
     }
-    // The runner can die during model load (KV cache won't fit the GPU); Ollama
-    // reports that as a 500 with raw socket text. Replace it with a clear cause.
+    // The instance can die during model load (KV cache won't fit the GPU),
+    // surfacing as a 500 with raw socket/allocator text — replace it with a
+    // clear cause.
     if (looksLikeRunnerCrash(detail)) {
       return res.status(502).json({ error: runnerCrashMessage(model, clean.num_ctx) });
     }
-    return res.status(upstream.status).json({ error: detail || `Ollama error ${upstream.status}` });
+    return res.status(upstream.status).json({ error: detail || `llama.cpp error ${upstream.status}` });
   }
 
   res.setHeader('Content-Type', 'application/x-ndjson');
@@ -334,7 +332,7 @@ router.post('/chat', async (req, res) => {
     await pipeNdjson(upstream, res, (obj) => {
       if (obj.message && obj.message.content) acc += obj.message.content;
       if (obj.message && obj.message.thinking) accThink += obj.message.thinking; // reasoning models
-      if (obj.or_usage) usage = obj.or_usage; // remote tokens + exact cost
+      if (obj.usage) usage = obj.usage; // tokens (+ exact cost, for remote models)
     });
   } catch (e) {
     // client aborting is normal (Stop button); anything else is worth logging

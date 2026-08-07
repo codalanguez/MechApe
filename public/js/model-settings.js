@@ -1,5 +1,5 @@
 /**
- * model-settings.js — per-project Ollama generation options.
+ * model-settings.js — per-project generation options.
  *
  * A modal (opened from the gear beside the model picker) edits the options
  * applied to every chat in the current project: model, context length, and
@@ -7,31 +7,28 @@
  * Values persist on the project (PUT /api/projects/:id) and ride along with
  * each /api/chat request via chat.js. Empty advanced fields are omitted so
  * the model's own default applies; the server sanitizes everything again.
+ * The option set is Ollama-shaped (see lib/options.js) but works against
+ * either backend — each has its own mapOptions translating what it accepts.
  */
 import { $, esc, toast, fmtCtx } from './util.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { updateModelInfo } from './model-info.js';
 
-/* Advanced params: [key, label, description, placeholder]. Order matches the
- * Ollama docs the screenshots came from. num_ctx/temperature live in the
- * always-visible section, so they are not repeated here. */
+/* Advanced params: [key, label, description, placeholder]. num_ctx/temperature
+ * live in the always-visible section, so they are not repeated here. */
 const ADVANCED = [
   ['num_predict', 'Max tokens', 'Maximum number of tokens to generate. Empty = model default.', '4096'],
   ['mirostat', 'mirostat', 'Mirostat sampling for perplexity control (0 = off, 1 = v1, 2 = v2).', '0'],
   ['mirostat_eta', 'mirostat_eta', 'How quickly Mirostat responds to feedback. (Default 0.1)', '0.10'],
   ['mirostat_tau', 'mirostat_tau', 'Balance of coherence vs diversity. (Default 5.0)', '5.00'],
-  ['num_gqa', 'num_gqa', 'GQA groups in the transformer. Required for some models (e.g. 8 for llama2:70b).', '0'],
-  ['num_thread', 'num_thread', 'CPU threads to use. Default auto-detects physical cores.', '0'],
   ['repeat_last_n', 'repeat_last_n', 'How far back to look to prevent repetition. (Default 64, 0 = off, -1 = num_ctx)', '64'],
   ['repeat_penalty', 'repeat_penalty', 'How strongly to penalize repetition. (Default 1.1)', '1.10'],
   ['seed', 'seed', 'Random seed. A fixed value makes generation reproducible.', '0'],
-  ['tfs_z', 'tfs_z', 'Tail-free sampling; higher reduces low-probability tokens. (1 = off)', '1.00'],
   ['top_k', 'top_k', 'Limits token choices; lower is more conservative. (Default 40)', '40'],
   ['top_p', 'top_p', 'Nucleus sampling; lower is more focused. (Default 0.9)', '0.90'],
   ['min_p', 'min_p', 'Minimum token probability relative to the most likely. (Default 0.0)', '0.00'],
   ['stop', 'stop', 'Stop sequences, comma-separated. Generation halts when one is produced.', 'stop, \\n, user:'],
-  ['keep_alive', 'keep_alive', 'How long the model stays loaded (e.g. 5m, 30, -1 for forever, 0 to unload now).', '5m'],
   ['or_route', 'or_route', 'Remote (OpenRouter) routing: floor = cheapest provider, nitro = fastest. Local models ignore this.', 'floor or nitro'],
 ];
 

@@ -18,7 +18,6 @@ function detectTraits(name, caps) {
   const n = name.toLowerCase();
   return {
     embed: /embed/.test(n),
-    cloud: /cloud/.test(n),
     vision: caps.includes('vision') || /llava|vision|-vl\b|moondream|minicpm-v|bakllava/.test(n),
     code: /cod(e|er)|starcoder|deepseek-coder|qwen[\w.-]*coder|codestral/.test(n),
     reasoning: caps.includes('thinking') || /\br1\b|reason|magistral|qwq|deepseek-r1/.test(n),
@@ -41,11 +40,10 @@ function usesFor(t) {
 /** A one-sentence usage recommendation from size and traits. */
 function recommend(size, t) {
   if (t.embed) return 'Embedding model — produces vectors, not chat replies. Not usable as a chat model here.';
-  if (t.cloud) return "Cloud-hosted — runs on Ollama's servers, not on your machine.";
 
   const gb = (size || 0) / 1e9;
   let base;
-  if (gb === 0) base = 'Size unknown — see Ollama for its requirements.';
+  if (gb === 0) base = 'Size unknown.';
   else if (gb < 2) base = 'Small and fast — great for quick tasks and low-resource machines; may struggle with hard reasoning.';
   else if (gb < 6) base = 'A balanced all-rounder — good quality and speed on most machines.';
   else if (gb < 15) base = 'Higher quality, but wants a capable GPU (≈12 GB+ VRAM) to stay responsive.';
@@ -95,7 +93,7 @@ export async function updateModelInfo(name) {
     caps = info.capabilities || [];
     $('#mi-specs').textContent = [info.parameterSize, info.quantization, fmtBytes(size), fmtCtxLabel(info.contextLength)]
       .filter(Boolean).join(' · ');
-  } catch { /* Ollama offline — fall back to size + name heuristics */ }
+  } catch { /* local backend offline — fall back to size + name heuristics */ }
   const traits = detectTraits(name, caps);
   $('#mi-uses').textContent = `Good for: ${usesFor(traits).join(' · ')}`;
   $('#mi-rec').textContent = recommend(size, traits);

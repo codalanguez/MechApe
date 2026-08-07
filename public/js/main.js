@@ -2,13 +2,13 @@
  * main.js — entry point: event wiring and startup.
  *
  * Imports every feature module, binds all buttons/keyboard handlers exactly
- * once (grouped by area below), then boots: check Ollama health, load models
- * and skills, and land on the projects page. Also schedules the recurring
- * health poll (15s) and update check (6h — the server caches for 24h).
+ * once (grouped by area below), then boots: check the local backend's
+ * health, load models and skills, and land on the projects page. Also
+ * schedules the recurring health poll (15s).
  */
 import { $, autoGrow } from './util.js';
 import { state } from './state.js';
-import { checkHealth, loadModels, checkOllamaUpdate, updateRemoteBadge } from './status.js';
+import { checkHealth, loadModels, updateRemoteBadge } from './status.js';
 import { initOpenRouter, refreshOrStatus } from './openrouter.js';
 import { loadSkills, updateSkillPopup, pickSkill, renderSkillToggles, handleSkillPopupKey, initSkillDetailActions } from './skills.js';
 import { initSkillCreate, showSkillCreateForm, importSkillFlow } from './skill-create.js';
@@ -63,8 +63,8 @@ function wireSkillsModal() {
 
 /** Actions arriving from the desktop shell's menu bar (preload bridge). */
 function wireDesktopMenu(openSkillsModal, openModelManager) {
-  if (!window.monkii?.onMenuAction) return;
-  window.monkii.onMenuAction(({ type, id }) => {
+  if (!window.mechape?.onMenuAction) return;
+  window.mechape.onMenuAction(({ type, id }) => {
     if (type === 'new-project') createProject();
     else if (type === 'open-project') openProject(id);
     else if (type === 'pick-skill') pickSkill(id);
@@ -142,10 +142,8 @@ async function init() {
   // in the picker
   await Promise.all([checkHealth(), refreshOrStatus().then(loadModels), loadSkills()]);
   await showProjectsPage(); // land on the all-projects page (welcome if none)
-  checkOllamaUpdate();
   checkModels(); // first-run: offer a chat model and the retrieval embed model if missing
   setInterval(checkHealth, 15000);
-  setInterval(checkOllamaUpdate, 6 * 60 * 60 * 1000); // server caches for 24h anyway
 }
 
 init();

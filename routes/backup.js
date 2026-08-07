@@ -3,7 +3,7 @@
  *
  * Backup zips DATA_DIR (projects + chats — the store the JSON files already
  * live in trivially, see lib/store.js) to a folder the caller picks, fenced
- * by the same MONKII_FS_ROOTS allowlist and filename rules as /fs/write.
+ * by the same MECHAPE_FS_ROOTS allowlist and filename rules as /fs/write.
  * Cached retrieval indexes aren't included: they're a rebuildable cache, not
  * source data (see lib/retrieval.js).
  *
@@ -53,14 +53,14 @@ router.post('/backup', (req, res) => {
   if (!SAFE_FILENAME.test(filename) || !filename.toLowerCase().endsWith('.zip')) {
     return res.status(400).json({ error: 'invalid filename' });
   }
-  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' });
+  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
   let dirStat;
   try { dirStat = fs.statSync(dir); }
   catch { return res.status(404).json({ error: 'folder not found' }); }
   if (!dirStat.isDirectory()) return res.status(400).json({ error: 'not a folder' });
 
   const target = path.join(dir, filename);
-  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MONKII_FS_ROOTS' }); // defense in depth
+  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' }); // defense in depth
   if (fs.existsSync(target)) return res.status(409).json({ error: 'A file with that name already exists.', exists: true });
 
   let projectFiles = [];

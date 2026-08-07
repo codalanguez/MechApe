@@ -40,7 +40,7 @@ router.post('/projects', (req, res) => {
     createdAt: Date.now(),
     skills: [],        // skill ids always loaded for this project
     attachments: [],   // { id, path, type: 'file'|'dir' }
-    options: {},       // Ollama generation options (num_ctx, temperature, …)
+    options: {},       // generation options (num_ctx, temperature, …) — see lib/options.js
     chats: [],         // { id, title, model, createdAt, messages: [{role, content, ts}] }
   };
   saveProject(p);
@@ -176,7 +176,7 @@ router.delete('/projects/:pid/chats/:cid/messages', (req, res) => {
 /** Validate a path and return a new attachment entry, or throw. */
 function makeAttachment(target) {
   if (typeof target !== 'string' || !target.trim()) throw new Error('missing path');
-  if (!pathAllowed(target)) throw new Error('That location is outside Monkii’s allowed folders. Widen access in Preferences → File access.');
+  if (!pathAllowed(target)) throw new Error('That location is outside MechApe’s allowed folders. Widen access in Preferences → File access.');
   const st = fs.statSync(target);
   return { id: newId(), path: target, type: st.isDirectory() ? 'dir' : 'file' };
 }

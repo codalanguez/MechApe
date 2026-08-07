@@ -35,7 +35,7 @@ function fillModelSelect() {
   const sel = $('#ns-model');
   const ranked = rankModelsForWriting(state.models);
   if (!ranked.length) {
-    sel.innerHTML = '<option value="">no models installed — ollama pull llama3.2</option>';
+    sel.innerHTML = '<option value="">no models installed — pull one from Manage models</option>';
     return;
   }
   sel.innerHTML = ranked.map((m, i) =>
@@ -68,7 +68,7 @@ async function submitNewSkill(generate) {
   if (!name) { toast('Give the skill a name', true); return; }
   if (generate && !description) { toast('Describe what the skill should do — that is the model’s brief', true); return; }
   const model = $('#ns-model').value;
-  if (generate && !model) { toast('No model available — pull one first (e.g. ollama pull llama3.2)', true); return; }
+  if (generate && !model) { toast('No model available — pull one first from Manage models', true); return; }
 
   const genBtn = $('#btn-generate-skill');
   const buttons = document.querySelectorAll('#skill-create button');

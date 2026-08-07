@@ -1,11 +1,10 @@
 /**
  * prefs.js — in-app Preferences panel.
  *
- * The Electron preload exposes `window.monkii`; when present, the gear in
- * the rail footer opens a modal with three storage locations:
- *   - Ollama models folder (applies next time the shell starts Ollama)
- *   - projects & chats folder (server restarts + UI reloads on change)
- *   - skills folder          (server restarts + UI reloads on change)
+ * The Electron preload exposes `window.mechape`; when present, the gear in
+ * the rail footer opens a modal with three storage locations — projects &
+ * chats, skills, and downloaded models — each restarting the server and
+ * reloading the UI on change.
  * Each can be overridden by its env var, in which case it renders read-only.
  * In plain browser mode the global is absent and those sections hide (see
  * the `.prefs-desktop` sweep below) — but Data & backup works in both modes,
@@ -19,7 +18,7 @@ import { openBrowser } from './filebrowser.js';
 import { state } from './state.js';
 import { showProjectsPage } from './projects.js';
 
-const bridge = window.monkii;
+const bridge = window.mechape;
 const WIPE_PHRASE = 'ERASE EVERYTHING';
 
 function renderLocation(pathElId, noteElId, buttonIds, value, envValue) {
@@ -29,13 +28,6 @@ function renderLocation(pathElId, noteElId, buttonIds, value, envValue) {
 }
 
 function render(prefs) {
-  const modelsLabel = (!prefs.modelsDir || prefs.modelsDir === 'default')
-    ? 'Ollama default (~/.ollama/models)'
-    : prefs.modelsDir;
-  renderLocation('#prefs-models-dir', '#prefs-env-note',
-    ['#btn-prefs-choose-dir', '#btn-prefs-default-dir'],
-    modelsLabel, prefs.envOverride);
-
   renderLocation('#prefs-data-dir', '#prefs-data-env-note',
     ['#btn-prefs-choose-data', '#btn-prefs-default-data'],
     prefs.dataDir + (prefs.dataDirCustom ? '' : '  (default)'), prefs.dataDirEnv);
@@ -44,14 +36,30 @@ function render(prefs) {
     ['#btn-prefs-choose-skills', '#btn-prefs-default-skills'],
     prefs.skillsDir + (prefs.skillsDirCustom ? '' : '  (default)'), prefs.skillsDirEnv);
 
+  renderLocation('#prefs-models-dir', '#prefs-models-env-note',
+    ['#btn-prefs-choose-models', '#btn-prefs-default-models'],
+    prefs.modelsDir + (prefs.modelsDirCustom ? '' : '  (default)'), prefs.modelsDirEnv);
+
+  renderGpu(prefs);
+
   renderFsAccess(prefs);
 
-  const upEnv = prefs.updateCheckEnv;
-  $('#prefs-update-check').checked = prefs.updateCheck;
-  $('#prefs-update-check').disabled = Boolean(upEnv);
-  $('#prefs-update-env-note').hidden = !upEnv;
-
   renderOpenRouter(prefs);
+}
+
+/** GPU build: what's running now, plus the CUDA opt-in (Windows only). */
+function renderGpu(prefs) {
+  const section = $('#prefs-cuda-section');
+  section.hidden = !prefs.cudaAvailable;
+  if (!prefs.cudaAvailable) return;
+  $('#prefs-use-cuda').checked = Boolean(prefs.useCuda);
+  // the live accelerator comes from the health endpoint, not preferences —
+  // it reflects what actually loaded, including a fallback to CPU
+  const el = $('#prefs-accel-current');
+  el.textContent = 'Checking…';
+  api('/api/health')
+    .then(h => { el.textContent = h.ok && h.accel ? `Currently running on: ${h.accel}` : 'Local backend not running'; })
+    .catch(() => { el.textContent = ''; });
 }
 
 // generation counter for the async budget box — a slow response from a
@@ -67,7 +75,7 @@ let orKeySaved = false;
 function renderOpenRouter(prefs) {
   $('#prefs-or-status').textContent = prefs.openrouterConfigured
     ? 'Key saved — remote models are available in the model picker.'
-    : 'No key — Monkii is fully local.';
+    : 'No key — MechApe is fully local.';
   $('#prefs-or-env-note').hidden = !prefs.openrouterKeyEnv;
   for (const id of ['#prefs-or-key', '#btn-prefs-or-save', '#btn-prefs-or-clear'])
     $(id).disabled = Boolean(prefs.openrouterKeyEnv);
@@ -108,7 +116,7 @@ function renderFsAccess(prefs) {
   const summary = $('#prefs-fs-summary');
   const list = $('#prefs-fs-list');
   if (prefs.fsWholeDisk) {
-    summary.textContent = 'Whole disk — Monkii can read anywhere on this computer.';
+    summary.textContent = 'Whole disk — MechApe can read anywhere on this computer.';
     list.innerHTML = '';
     return;
   }
@@ -152,7 +160,7 @@ function wireAction(btnId, call, msg) {
 
 /* ---- theme (works in desktop AND browser mode — purely client-side) ---- */
 
-const THEME_KEY = 'monkii.theme'; // keep in sync with js/theme-boot.js
+const THEME_KEY = 'mechape.theme'; // keep in sync with js/theme-boot.js
 const savedTheme = () => { try { return localStorage.getItem(THEME_KEY) || 'cyber-deco'; } catch { return 'cyber-deco'; } };
 
 function applyTheme(t) {
@@ -185,7 +193,7 @@ export function initPrefs() {
       onPick: async (dir) => {
         const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
         try {
-          const res = await api('/api/backup', { method: 'POST', body: { dir, filename: `monkii-backup-${stamp}.zip` } });
+          const res = await api('/api/backup', { method: 'POST', body: { dir, filename: `mechape-backup-${stamp}.zip` } });
           toast(`Backed up ${res.projects} project${res.projects === 1 ? '' : 's'} to ${res.path}`);
         } catch (e) { toast(e.message, true); }
       },
@@ -218,22 +226,26 @@ export function initPrefs() {
 
   $('#btn-prefs-open-data').addEventListener('click', () => bridge.openDataFolder());
 
-  wireAction('#btn-prefs-choose-dir', () => bridge.chooseModelsDir(),
-    'Models folder saved — applies next time Monkii starts Ollama');
-  wireAction('#btn-prefs-default-dir', () => bridge.setModelsDefault(),
-    'Using Ollama default — applies next time Monkii starts Ollama');
-
   wireAction('#btn-prefs-choose-data', () => bridge.chooseDataDir());
   wireAction('#btn-prefs-default-data', () => bridge.resetDataDir());
   wireAction('#btn-prefs-choose-skills', () => bridge.chooseSkillsDir());
   wireAction('#btn-prefs-default-skills', () => bridge.resetSkillsDir());
+  wireAction('#btn-prefs-choose-models', () => bridge.chooseModelsDir());
+  wireAction('#btn-prefs-default-models', () => bridge.resetModelsDir());
+
+  $('#prefs-use-cuda').addEventListener('change', async (e) => {
+    const next = await bridge.setUseCuda(e.target.checked);
+    if (next) {
+      render(next);
+      toast(e.target.checked
+        ? 'CUDA enabled — it downloads (~640 MB) the next time you start MechApe'
+        : 'Staying on the bundled Vulkan build — applies the next time you start MechApe');
+    }
+  });
 
   wireAction('#btn-prefs-fs-add', () => bridge.addFsRoot());
   wireAction('#btn-prefs-fs-all', () => bridge.fsWholeDisk());
   wireAction('#btn-prefs-fs-home', () => bridge.fsResetHome());
-
-  // toggling restarts the server (config reads the flag at boot) and reloads
-  $('#prefs-update-check').addEventListener('change', (e) => bridge.setUpdateCheck(e.target.checked));
 
   // OpenRouter key: sent one-way to the main process (encrypted at rest),
   // input cleared immediately either way
@@ -242,7 +254,7 @@ export function initPrefs() {
     if (!key) { toast('Paste an OpenRouter API key first', true); return; }
     // a key is already saved — replacing it should be a decision, not a slip
     if (orKeySaved && !await confirmDialog(
-      'Replace the saved OpenRouter key with this new one? The old key stays valid at openrouter.ai — this only changes which key Monkii uses.',
+      'Replace the saved OpenRouter key with this new one? The old key stays valid at openrouter.ai — this only changes which key MechApe uses.',
       { confirmLabel: 'Replace key' })) return;
     $('#prefs-or-key').value = '';
     try {

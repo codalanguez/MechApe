@@ -1,9 +1,8 @@
 /**
- * status.js — Ollama connection status, model list, and update pill.
+ * status.js — local backend connection status and model list.
  *
- * Owns the sidebar health indicator (polled every 15s), the model <select>
- * population, and the "new Ollama version available" pill fed by the
- * server's daily update check.
+ * Owns the sidebar health indicator (polled every 15s) and the model
+ * <select> population.
  */
 import { $, esc } from './util.js';
 import { api } from './api.js';
@@ -11,22 +10,28 @@ import { state } from './state.js';
 import { orFavorites, isRemoteModel, OR_PREFIX } from './openrouter.js';
 
 export async function checkHealth() {
-  const el = $('#ollama-status');
+  const el = $('#local-status');
   try {
     const h = await api('/api/health');
     if (h.ok) {
       el.className = 'status status-ok';
-      el.querySelector('span').textContent = `Ollama ${h.version}`;
+      // name the accelerator when we know it — a silent fall back to CPU
+      // (no GPU found, or a model that wouldn't fit in VRAM) should be
+      // visible here rather than just feeling mysteriously slow
+      el.querySelector('span').textContent = h.accel ? `local models · ${h.accel}` : 'local models ready';
+      el.title = h.accel === 'CPU'
+        ? 'Running on CPU — either no supported GPU was found, or the model would not load on it. Generation will be slower.'
+        : '';
       $('#welcome-hint').hidden = true;
     } else throw new Error();
   } catch {
     el.className = 'status status-bad';
-    el.querySelector('span').textContent = 'Ollama offline';
+    el.querySelector('span').textContent = 'local backend offline';
     const hint = $('#welcome-hint');
     hint.hidden = false;
     hint.textContent = state.orConfigured
-      ? 'Ollama is not reachable, so local models are unavailable — remote (OpenRouter) models still work.'
-      : 'Ollama is not reachable at its default address. Start it with "ollama serve" (or launch the Ollama app), then this light turns green.';
+      ? "MechApe's local model backend isn't reachable, so local models are unavailable — remote (OpenRouter) models still work."
+      : "MechApe's local model backend isn't reachable. In the desktop app, restart MechApe; in a repo checkout, start the llama-server chat + embed instances yourself (see the README), then this light turns green.";
   }
 }
 
@@ -40,17 +45,17 @@ export async function loadModels() {
   const sel = $('#model-select');
   const prev = sel.value;
   let local = [];
-  let ollamaUp = true;
+  let backendUp = true;
   try {
     local = (await api('/api/models')).models;
-  } catch { ollamaUp = false; }
+  } catch { backendUp = false; }
   state.models = local;
 
   const favs = state.orConfigured ? orFavorites() : [];
   if (!local.length && !favs.length) {
-    sel.innerHTML = ollamaUp
-      ? '<option value="">no models — try: ollama pull llama3.2</option>'
-      : '<option value="">Ollama offline</option>';
+    sel.innerHTML = backendUp
+      ? '<option value="">no models — pull one from Manage models</option>'
+      : '<option value="">local backend offline</option>';
   } else {
     const localOpts = local.map(m => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join('');
     const remoteOpts = favs.map(f => `<option value="${OR_PREFIX}${esc(f.id)}">☁ ${esc(f.name || f.id)}</option>`).join('');
@@ -60,26 +65,4 @@ export async function loadModels() {
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
   }
   updateRemoteBadge();
-}
-
-let updatePrompted = false; // one native popup per session
-
-export async function checkOllamaUpdate() {
-  try {
-    const u = await api('/api/update-check');
-    const pill = $('#ollama-update');
-    if (u.updateAvailable) {
-      pill.textContent = `↑ Ollama ${u.latest} available`;
-      pill.title = `You have ${u.current}. Click to download ${u.latest}.`;
-      if (u.url) pill.href = u.url;
-      pill.hidden = false;
-      // In the desktop app, nudge with a native popup (the pill alone is easy to
-      // miss). Once per session here; the main process also mutes any version
-      // the user asked not to be reminded about.
-      if (!updatePrompted && window.monkii?.ollamaUpdatePrompt) {
-        updatePrompted = true;
-        window.monkii.ollamaUpdatePrompt({ current: u.current, latest: u.latest, url: u.url });
-      }
-    } else pill.hidden = true;
-  } catch { /* non-essential */ }
 }

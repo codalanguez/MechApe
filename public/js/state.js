@@ -11,7 +11,7 @@ export const state = {
   projects: [],          // project summaries for the sidebar
   project: null,         // full loaded project (chats, attachments, skills)
   chatId: null,          // active chat id within state.project
-  models: [],            // available Ollama models
+  models: [],            // available local (.gguf) models
   skills: [],            // available skills (id, name, description)
   invokedSkills: [],     // skill ids invoked via "/" for the next message
   streaming: false,      // a reply is currently streaming

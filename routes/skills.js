@@ -36,7 +36,7 @@ router.post('/skills/import', (req, res) => {
   try {
     const p = req.body.path;
     if (typeof p !== 'string' || !p.trim()) throw new Error('missing path');
-    if (!pathAllowed(p)) throw new Error('path outside MONKII_FS_ROOTS');
+    if (!pathAllowed(p)) throw new Error('path outside MECHAPE_FS_ROOTS');
     res.json(importSkill(p, { force: Boolean(req.body.force), asId: req.body.asId }));
   } catch (e) { res.status(400).json({ error: String(e.message || e) }); }
 });

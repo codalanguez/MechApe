@@ -1,5 +1,5 @@
 /**
- * model-bootstrap.js — first-run offers to pull the models Monkii needs.
+ * model-bootstrap.js — first-run offers to pull the models MechApe needs.
  *
  * On a clean install with no models, chatting is impossible and large-attachment
  * search is unavailable. The desktop shell offers (once each) to pull a small
@@ -26,8 +26,8 @@ async function checkChatModel() {
   try { status = await api('/api/chat-status'); } catch { return; }
   if (status.hasChatModel) return;                 // already have something to chat with
   if (state.orConfigured) return;                  // remote models cover chatting — don't nag
-  if (!window.monkii?.chatModelPrompt) return;     // browser mode: stay silent
-  const choice = await window.monkii.chatModelPrompt({ recommended: status.recommended, size: status.size });
+  if (!window.mechape?.chatModelPrompt) return;     // browser mode: stay silent
+  const choice = await window.mechape.chatModelPrompt({ recommended: status.recommended, size: status.size });
   if (choice === 'download') {
     await pullModel(status.recommended, `${status.recommended} ready — pick it in the model selector to start chatting.`);
     await loadModels(); // the freshly pulled model now shows up in the picker
@@ -41,8 +41,8 @@ async function checkEmbedModel() {
   let status;
   try { status = await api('/api/embed-status'); } catch { return; }
   if (status.installed) return;                    // already have one — nothing to do
-  if (!window.monkii?.embedModelPrompt) return;    // browser mode: stay silent
-  const choice = await window.monkii.embedModelPrompt({ recommended: status.recommended, size: status.size });
+  if (!window.mechape?.embedModelPrompt) return;    // browser mode: stay silent
+  const choice = await window.mechape.embedModelPrompt({ recommended: status.recommended, size: status.size });
   if (choice === 'download') await pullModel(status.recommended, `${status.recommended} ready — large attachments are now searched offline instead of truncated.`);
 }
 

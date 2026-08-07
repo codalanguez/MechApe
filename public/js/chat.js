@@ -4,9 +4,9 @@
  * Owns everything that happens inside a chat: creating/opening/deleting
  * chats, rendering the message history (markdown for the model, escaped
  * plaintext for the user), and send() — which POSTs to /api/chat, consumes
- * Ollama's NDJSON stream chunk by chunk, re-renders markdown at most every
- * 80ms, keeps the view pinned to the bottom unless the user scrolled up,
- * and supports mid-generation Stop.
+ * the backend's NDJSON stream chunk by chunk, re-renders markdown at most
+ * every 80ms, keeps the view pinned to the bottom unless the user scrolled
+ * up, and supports mid-generation Stop.
  */
 import { $, esc, toast, readNdjson, copyText } from './util.js';
 import { api } from './api.js';
@@ -24,14 +24,14 @@ import { saveAsFile } from './savefile.js';
 
 const THINKING_DOTS = '<span class="thinking-dots"><i></i><i></i><i></i></span>';
 
-// A LOCAL runner that crashes mid-generation surfaces as raw Ollama socket
+// A LOCAL chat instance that crashes mid-generation surfaces as raw socket
 // text forwarded straight through the stream. Translate that to a
 // plain-language cause — but only for local models: a remote provider's
 // "connection reset" is their outage, not your GPU, and the advice would be
 // wrong. (The server already rewrites load-time crashes, whose message no
 // longer contains these keywords, so this won't touch it.)
-// Keep this pattern identical to RUNNER_CRASH_RE in routes/ollama.js.
-const RUNNER_CRASH_RE = /wsarecv|forcibly closed|connection reset|econnreset|broken pipe|runner (process )?has terminated|llama runner|exit status|unexpected eof|out of memory|cudamalloc|cuda error|insufficient memory|failed to allocate/i;
+// Keep this pattern identical to RUNNER_CRASH_RE in routes/models.js.
+const RUNNER_CRASH_RE = /wsarecv|forcibly closed|connection reset|econnreset|broken pipe|process (has )?terminated|exit status|unexpected eof|out of memory|cudamalloc|cuda error|insufficient memory|failed to allocate/i;
 const humanizeError = (msg, model) => (isRemoteModel(model) || !RUNNER_CRASH_RE.test(msg || ''))
   ? msg
   : "The model's runner ran out of GPU memory and crashed. Lower the context length in Model settings, pick a smaller model, or close other GPU apps.";
@@ -416,7 +416,7 @@ async function runExchange(text, skillIds, model) {
       if (obj.error) throw new Error(obj.error);
       if (obj.message && obj.message.thinking) accThink += obj.message.thinking; // reasoning models
       if (obj.message && obj.message.content) acc += obj.message.content;
-      if (obj.or_usage) usage = obj.or_usage;
+      if (obj.usage) usage = obj.usage;
       const now = performance.now();
       if (now - lastRender > 80) {  // throttle markdown re-render
         // the thinking block stays open while it's all we have, folds once the answer starts

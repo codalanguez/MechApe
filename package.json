@@ -1,7 +1,7 @@
 {
-  "name": "monkii",
+  "name": "mechape",
   "version": "1.11.2",
-  "description": "Monkii — local LLM studio for Ollama: projects, Claude-style skills, and live file knowledge",
+  "description": "MechApe — local LLM studio: projects, Claude-style skills, and live file knowledge, on your own llama.cpp backend",
   "license": "MIT",
   "author": {
     "name": "Coda Languez",
@@ -10,10 +10,11 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node scripts/test-openrouter.js",
+    "test": "node scripts/test-openrouter.js && node scripts/test-llamacpp.js",
     "desktop": "electron .",
     "bench": "node scripts/benchmark.js",
-    "dist": "node scripts/build-info.js",
+    "runtime": "node scripts/fetch-runtime.js",
+    "dist": "node scripts/fetch-runtime.js && node scripts/build-info.js",
     "dist:dir": "electron-builder --dir"
   },
   "dependencies": {
@@ -25,8 +26,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.codalanguez.monkii",
-    "productName": "Monkii",
+    "appId": "com.codalanguez.mechape",
+    "productName": "MechApe",
     "asar": false,
     "publish": null,
     "directories": {
@@ -36,11 +37,21 @@
     "files": [
       "server.js",
       "electron/**/*",
+      "!electron/runtime/**",
       "lib/**/*",
       "routes/**/*",
       "public/**/*",
       "skills/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": [
@@ -84,14 +95,14 @@
       ],
       "icon": "electron/build/icons",
       "category": "Utility",
-      "executableName": "monkii"
+      "executableName": "mechape"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Monkii"
+      "shortcutName": "MechApe"
     }
   }
 }

@@ -4,6 +4,9 @@ embeddings/          # retrieval indexes — contain chunked attachment TEXT; ne
 logs/
 dist/
 *.log
-.monkii-signing/     # code-signing PFX + password; never commit
+.mechape-signing/     # code-signing PFX + password; never commit
 .DS_Store
 Thumbs.db
+
+# llama.cpp runtime fetched at build time (scripts/fetch-runtime.js)
+electron/runtime/

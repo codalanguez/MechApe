@@ -115,7 +115,10 @@ export function attachToProject() {
 
 /* ---- per-chat attachments (knowledge for a single chat) ---- */
 
-const currentChat = () => state.project?.chats.find(c => c.id === state.chatId);
+/* A function declaration, not a const arrow: attachedPaths() above calls this,
+ * and a const would leave that call in the temporal dead zone if anything ever
+ * ran it during module evaluation. Hoisting removes the hazard outright. */
+function currentChat() { return state.project?.chats.find(c => c.id === state.chatId); }
 
 /** Render the current chat's attachment chips above the composer. */
 export function renderChatAttachments() {

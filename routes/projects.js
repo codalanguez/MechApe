@@ -106,7 +106,7 @@ router.delete('/projects/:pid/chats/:cid', (req, res) => {
 router.put('/projects/:pid/chats/:cid', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     if (typeof req.body.title === 'string') c.title = req.body.title.slice(0, 120);
     saveProject(p);
@@ -120,7 +120,7 @@ router.put('/projects/:pid/chats/:cid', (req, res) => {
 router.delete('/projects/:pid/chats/:cid/messages/last', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     if (!c.messages.some(m => m.role === 'user')) return res.status(400).json({ error: 'nothing to retry' });
     while (c.messages.length && c.messages[c.messages.length - 1].role !== 'user') c.messages.pop();
@@ -142,7 +142,7 @@ router.delete('/projects/:pid/chats/:cid/messages/last', (req, res) => {
 router.delete('/projects/:pid/chats/:cid/messages/from/:idx', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     if (!/^\d+$/.test(req.params.idx)) return res.status(400).json({ error: 'not an editable message' });
     const idx = Number(req.params.idx);
@@ -160,7 +160,7 @@ router.delete('/projects/:pid/chats/:cid/messages/from/:idx', (req, res) => {
 router.delete('/projects/:pid/chats/:cid/messages', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     c.messages = [];
     saveProject(p);
@@ -241,7 +241,7 @@ router.delete('/projects/:pid/attachments/:aid', (req, res) => {
 router.post('/projects/:pid/chats/:cid/attachments', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     if (!c.attachments) c.attachments = [];
     let att = c.attachments.find(a => a.path === req.body.path);
@@ -258,7 +258,7 @@ router.post('/projects/:pid/chats/:cid/attachments', (req, res) => {
 router.post('/projects/:pid/chats/:cid/attachments/batch', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     if (!c.attachments) c.attachments = [];
     const { results, warmed } = attachBatch(c.attachments, req.body.paths);
@@ -271,7 +271,7 @@ router.post('/projects/:pid/chats/:cid/attachments/batch', (req, res) => {
 router.delete('/projects/:pid/chats/:cid/attachments/:aid', (req, res) => {
   try {
     const p = loadProject(req.params.pid);
-    const c = p.chats.find(c => c.id === req.params.cid);
+    const c = p.chats.find(chat => chat.id === req.params.cid);
     if (!c) return res.status(404).json({ error: 'chat not found' });
     const gone = (c.attachments || []).find(a => a.id === req.params.aid);
     c.attachments = (c.attachments || []).filter(a => a.id !== req.params.aid);

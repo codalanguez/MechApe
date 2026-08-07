@@ -163,6 +163,15 @@ test('variantChain: opting out keeps an NVIDIA machine on the bundled build', ()
   assert.deepStrictEqual(variantChain('win32', { hasNvidia: true, cudaOptOut: true }), ['vulkan', 'cpu']);
 });
 
+// verbatim from the dev laptop — the iGPU enumerates FIRST and reports 4x the
+// memory (it shares system RAM), so both "take device 0" (llama.cpp's own
+// default) and "take the most memory" pick the slow one.
+// Declared above its first use: node:test defers callbacks so a later const
+// happened to work, but that is luck, not design.
+const LAPTOP_OUTPUT = `Available devices:
+  Vulkan0: Intel(R) UHD Graphics (32618 MiB, 48085 MiB free)
+  Vulkan1: NVIDIA GeForce RTX 3070 Laptop GPU (8018 MiB, 7250 MiB free)`;
+
 test('anyNvidia: recognises NVIDIA cards and is not fooled by other vendors', () => {
   const nv = parseDevices(LAPTOP_OUTPUT).gpus;               // Intel iGPU + RTX 3070
   assert.strictEqual(anyNvidia(nv), true, 'must spot the NVIDIA card even alongside an Intel iGPU');
@@ -174,13 +183,6 @@ test('anyNvidia: recognises NVIDIA cards and is not fooled by other vendors', ()
 });
 
 /* ---- device selection: which GPU to actually offload to ---- */
-
-// verbatim from the dev laptop — the iGPU enumerates FIRST and reports 4x the
-// memory (it shares system RAM), so both "take device 0" (llama.cpp's own
-// default) and "take the most memory" pick the slow one
-const LAPTOP_OUTPUT = `Available devices:
-  Vulkan0: Intel(R) UHD Graphics (32618 MiB, 48085 MiB free)
-  Vulkan1: NVIDIA GeForce RTX 3070 Laptop GPU (8018 MiB, 7250 MiB free)`;
 
 test('parseDevices: pulls the id, name, and memory off each device line', () => {
   const { gpus } = parseDevices(LAPTOP_OUTPUT);

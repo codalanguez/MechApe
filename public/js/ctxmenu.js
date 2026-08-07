@@ -11,7 +11,7 @@
  * Right-clicks inside inputs and textareas are left alone so the native
  * editing menu (provided by the desktop shell) can appear.
  */
-import { $, copyText, toast } from './util.js';
+import { copyText, toast } from './util.js';
 import { openChat, renameChat, deleteChat, clearChat, currentChat, beginEditMessage, copyConversationMarkdown, saveConversationAsFile } from './chat.js';
 import { openProject, deleteProjectById } from './projects.js';
 import { openSkillDetail } from './skills.js';

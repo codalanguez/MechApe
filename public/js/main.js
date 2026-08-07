@@ -13,7 +13,7 @@ import { initOpenRouter, refreshOrStatus } from './openrouter.js';
 import { loadSkills, updateSkillPopup, pickSkill, renderSkillToggles, handleSkillPopupKey, initSkillDetailActions } from './skills.js';
 import { initSkillCreate, showSkillCreateForm, importSkillFlow } from './skill-create.js';
 import { createProject, openProject, saveProjectMeta, deleteProject, showProjectsPage, quickChat } from './projects.js';
-import { openBrowser, browseTo, closeBrowser, pickCurrentDir, commitSelection } from './filebrowser.js';
+import { browseTo, closeBrowser, pickCurrentDir, commitSelection } from './filebrowser.js';
 import { attachToProject, attachToChat } from './attachments.js';
 import { newChat, send, clearChat } from './chat.js';
 import { initOverflowDialog } from './overflow.js';
@@ -62,7 +62,7 @@ function wireSkillsModal() {
 }
 
 /** Actions arriving from the desktop shell's menu bar (preload bridge). */
-function wireDesktopMenu(openSkillsModal, openModelManager) {
+function wireDesktopMenu(openSkillsModal, openModels) {
   if (!window.mechape?.onMenuAction) return;
   window.mechape.onMenuAction(({ type, id }) => {
     if (type === 'new-project') createProject();
@@ -70,7 +70,7 @@ function wireDesktopMenu(openSkillsModal, openModelManager) {
     else if (type === 'pick-skill') pickSkill(id);
     else if (type === 'new-skill') { openSkillsModal(); showSkillCreateForm(); }
     else if (type === 'import-skill') { openSkillsModal(); importSkillFlow(); }
-    else if (type === 'manage-models') openModelManager();
+    else if (type === 'manage-models') openModels();
     else if (type === 'preferences') $('#btn-prefs').click();
     else if (type === 'help') $('#btn-help').click();
     else if (type === 'about') $('#btn-about').click();

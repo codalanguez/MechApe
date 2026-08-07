@@ -43,7 +43,7 @@ fs.mkdirSync(process.env.MECHAPE_DATA_DIR, { recursive: true });
 const { buildSystem } = require(path.join(REPO, 'lib', 'prompt'));
 const { readForIndex } = require(path.join(REPO, 'lib', 'attachments'));
 const { estimateTokens } = require(path.join(REPO, 'lib', 'tokens'));
-const { FILE_LIMIT, RETRIEVAL_MIN_CHARS, LLAMACPP_CHAT_URL, LLAMACPP_EMBED_URL } = require(path.join(REPO, 'lib', 'config'));
+const { FILE_LIMIT, LLAMACPP_CHAT_URL } = require(path.join(REPO, 'lib', 'config'));
 const llamacpp = require(path.join(REPO, 'lib', 'llamacpp'));
 const { embedStatus, isEmbedName } = require(path.join(REPO, 'lib', 'retrieval'));
 
@@ -53,8 +53,8 @@ const msA = async (f) => { const t = performance.now(); const r = await f(); ret
 const fmtDur = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`;
 const fmtMB = (b) => `${(b / 1048576).toFixed(1)} MB`;
 const commas = (n) => Math.round(n).toLocaleString('en-US');
-const fail = (m) => { console.error(`\n✗ ${m}`); cleanup(); process.exit(1); };
 const cleanup = () => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} };
+const fail = (m) => { console.error(`\n✗ ${m}`); cleanup(); process.exit(1); };
 
 function machineLine(embedModel, chatModel) {
   const cpu = (os.cpus()[0] && os.cpus()[0].model || 'CPU').replace(/\(R\)|\(TM\)|CPU|@.*/g, '').replace(/\s+/g, ' ').trim();
@@ -202,7 +202,6 @@ async function run() {
 
 function renderMarkdown(d) {
   const big = d.rows[d.rows.length - 1];
-  const reduction = Math.round(100 * (1 - big.retrTokens / big.dumpTokens));
   const coverage = Math.round(100 * big.dumpCapChars / big.size); // % of the biggest file the dump path sees
   const ratios = d.rows.map(r => r.indexBytes / r.size);
   const ratioLo = Math.round(Math.min(...ratios)), ratioHi = Math.round(Math.max(...ratios));

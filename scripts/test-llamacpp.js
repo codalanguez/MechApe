@@ -30,6 +30,7 @@ const llamacpp = require('../lib/llamacpp');
 const gguf = require('../lib/gguf');
 const { streamToFile } = require('../lib/download');
 const { parseDevices, variantChain, accelLabel, pickDevice, anyNvidia } = require('../lib/accel');
+const { EMBED_BATCH, CHUNK_CHARS } = require('../lib/config');
 
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
@@ -344,6 +345,48 @@ function writeTemp(name, buf) {
   fs.writeFileSync(p, buf);
   return p;
 }
+
+/* ---- embed batch sizing ----
+ * A chunk that overflows the embed server's *physical* batch does not get
+ * truncated, it fails outright, and retrieval silently falls back to dumping
+ * the file. That shipped: a markdown inventory hit 517 tokens against
+ * llama.cpp's default 512-token ubatch. ---- */
+
+test('EMBED_BATCH cannot be smaller than the largest possible chunk', () => {
+  // A token is never shorter than one character, so a chunk capped at
+  // CHUNK_CHARS characters can never exceed CHUNK_CHARS tokens. Holding
+  // EMBED_BATCH at or above CHUNK_CHARS therefore *proves* every chunk fits,
+  // without having to reason about any particular tokenizer. This assertion
+  // is what stops a future bump to CHUNK_CHARS from quietly breaking
+  // embedding again.
+  assert.ok(EMBED_BATCH >= CHUNK_CHARS,
+    `EMBED_BATCH (${EMBED_BATCH}) must be >= CHUNK_CHARS (${CHUNK_CHARS}), or a chunk of dense text cannot be embedded`);
+});
+
+test('embedBatchFor: clamps down to what the model was trained for', async () => {
+  // llama-server refuses to start when -c overshoots the model's context, so
+  // a small embedder must come up with a smaller batch rather than not at all.
+  const small = writeTemp('small-embed.gguf', buildGguf([
+    ['general.architecture', TYPE.STRING, ggufString('bert')],
+    ['bert.context_length', TYPE.UINT32, u32(512)],
+  ]));
+  assert.strictEqual(await llamacpp.embedBatchFor(small), 512);
+});
+
+test('embedBatchFor: a roomy model still gets EMBED_BATCH, not its full context', async () => {
+  const roomy = writeTemp('roomy-embed.gguf', buildGguf([
+    ['general.architecture', TYPE.STRING, ggufString('bert')],
+    ['bert.context_length', TYPE.UINT32, u32(8192)],
+  ]));
+  assert.strictEqual(await llamacpp.embedBatchFor(roomy), EMBED_BATCH);
+});
+
+test('embedBatchFor: an unreadable header falls back to EMBED_BATCH, not to something small', async () => {
+  // Guessing small here would reintroduce the truncation this exists to stop;
+  // a broken GGUF is the model loader's problem to report, not this one's.
+  const junk = writeTemp('not-a-model.gguf', Buffer.from('nonsense'));
+  assert.strictEqual(await llamacpp.embedBatchFor(junk), EMBED_BATCH);
+});
 
 test('gguf: reads architecture + context_length from a well-formed file', async () => {
   const buf = buildGguf([

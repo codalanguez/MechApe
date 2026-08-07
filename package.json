@@ -1,6 +1,6 @@
 {
   "name": "mechape",
-  "version": "1.11.2",
+  "version": "2.0.0",
   "description": "MechApe — local LLM studio: projects, Claude-style skills, and live file knowledge, on your own llama.cpp backend",
   "license": "MIT",
   "author": {

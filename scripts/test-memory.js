@@ -136,6 +136,36 @@ test('promptBlock: frames memories as background the user can override', () => {
   assert.ok(/the user is right/i.test(block), 'a stale memory must lose to what the user says now');
 });
 
+/* ---- the remote boundary ---- */
+
+test('buildSystem: a remote chat carries no memory block', async () => {
+  // Picking a remote model consents to sending THIS conversation to a
+  // provider — not a profile distilled from every other one. Extraction was
+  // gated from the start; injection was not, and shipped that way for a few
+  // hours. This test is why it cannot happen again quietly.
+  reset();
+  memory.add(['writes horror fiction under a pen name']);
+  const { buildSystem } = require('../lib/prompt');
+  const project = { instructions: '', skills: [], attachments: [] };
+  const chat = { messages: [], attachments: [] };
+
+  const local = await buildSystem(project, [], chat, 'horror', { includeMemory: true });
+  assert.ok(local.includes('writes horror fiction under a pen name'), 'a local chat should get memory');
+
+  const remote = await buildSystem(project, [], chat, 'horror', { includeMemory: false });
+  assert.ok(!remote.includes('writes horror fiction'), 'memory must not reach a remote provider');
+  assert.ok(!/# Memory/.test(remote), 'not even the heading should appear on a remote turn');
+});
+
+test('buildSystem: default is the safe one', async () => {
+  // A caller that forgets the flag gets no memory rather than a leak.
+  reset();
+  memory.add(['a private fact']);
+  const { buildSystem } = require('../lib/prompt');
+  const out = await buildSystem({ instructions: '', skills: [], attachments: [] }, [], { messages: [] }, 'private');
+  assert.ok(!out.includes('a private fact'), 'omitting the flag must not inject memory');
+});
+
 /* ---- the off switch ---- */
 
 test('MECHAPE_MEMORY=off extracts nothing and injects nothing', async () => {

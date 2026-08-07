@@ -208,7 +208,10 @@ router.post('/context', async (req, res) => {
     // use the latest user turn as the retrieval query so the estimate reflects
     // the retrieval-capped size (not a full dump) for big attachments
     const lastUser = [...chat.messages].reverse().find(m => m.role === 'user');
-    const system = await buildSystem(project, skillIds, chat, lastUser ? lastUser.content : '');
+    // Match what the chat will actually send: a remote turn carries no
+    // memory block, so counting one here would overstate the usage meter.
+    const system = await buildSystem(project, skillIds, chat, lastUser ? lastUser.content : '',
+      { includeMemory: !openrouter.isRemote(chat.model || '') });
     const history = chat.messages.slice(-HISTORY_LIMIT).map(m => m.content).join('\n');
     const systemTokens = estimateTokens(system);
     const baseTokens = systemTokens + estimateTokens(history);
@@ -245,13 +248,16 @@ router.post('/chat', async (req, res) => {
   chat.model = model;
   saveProject(project);
 
-  const system = await buildSystem(project, skillIds, chat, message);
+  // Resolved before the prompt is assembled: buildSystem withholds cross-chat
+  // memory from remote models, so it has to know which kind this is.
+  const remote = openrouter.isRemote(model);
+
+  const system = await buildSystem(project, skillIds, chat, message, { includeMemory: !remote });
   const history = chat.messages.slice(-HISTORY_LIMIT).map(m => ({ role: m.role, content: m.content }));
 
   // Compact to fit the context: drop the oldest history messages until the
   // estimated request fits the limit, always keeping the system prompt and the
   // latest message. (Stored history is untouched — only this request is trimmed.)
-  const remote = openrouter.isRemote(model);
   const limit = await contextLimitFor(model, project.options);
   const sysTokens = estimateTokens(system);
   const fits = (msgs) => sysTokens + msgs.reduce((n, m) => n + estimateTokens(m.content), 0) <= limit;

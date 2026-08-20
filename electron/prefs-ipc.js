@@ -12,7 +12,7 @@
 const { ipcMain, dialog, shell } = require('electron');
 const os = require('os');
 const runtime = require('./runtime');
-const { env, loadSettings, saveSettings, effectiveStorage, fsRootsList, fsWholeDisk, setOpenRouterKey, openrouterConfigured, orDataCollection } = require('./settings');
+const { env, loadSettings, saveSettings, effectiveStorage, fsRootsList, fsWholeDisk, setOpenRouterKey, openrouterConfigured, openrouterKeyLost, orDataCollection } = require('./settings');
 const { pickFolder } = require('./dialogs');
 const { restartServer } = require('./server');
 const { buildMenu } = require('./menu');
@@ -48,6 +48,10 @@ function prefsSummary() {
     // crosses into the renderer
     openrouterConfigured: openrouterConfigured(),
     openrouterKeyEnv: env('OPENROUTER_KEY') !== undefined,
+    // a key WAS configured, but it was encrypted by a previous install (a
+    // rename migration copies the ciphertext, never the OS key that opens
+    // it). The panel says so instead of claiming no key was ever set.
+    openrouterKeyLost: openrouterKeyLost(),
     orDataCollection: orDataCollection(),
     orDataCollectionEnv: env('OR_DATA_COLLECTION') !== undefined,
   };

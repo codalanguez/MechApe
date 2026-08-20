@@ -75,7 +75,12 @@ let orKeySaved = false;
 function renderOpenRouter(prefs) {
   $('#prefs-or-status').textContent = prefs.openrouterConfigured
     ? 'Key saved — remote models are available in the model picker.'
-    : 'No key — MechApe is fully local.';
+    : prefs.openrouterKeyLost
+      // an upgrade that renamed the app leaves the saved key unreadable. Say
+      // that plainly: "no key" would read as a setting the user never made.
+      ? 'Your saved key could not be read after the app was updated — paste it again below to restore remote models.'
+      : 'No key — MechApe is fully local.';
+  $('#prefs-or-status').classList.toggle('prefs-warn', Boolean(prefs.openrouterKeyLost) && !prefs.openrouterConfigured);
   $('#prefs-or-env-note').hidden = !prefs.openrouterKeyEnv;
   for (const id of ['#prefs-or-key', '#btn-prefs-or-save', '#btn-prefs-or-clear'])
     $(id).disabled = Boolean(prefs.openrouterKeyEnv);

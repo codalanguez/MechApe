@@ -48,6 +48,7 @@ cd MechApe
 npm install        # first time only
 npm start          # then open http://localhost:8113
 npm test           # unit tests for the OpenRouter + llama.cpp adapter boundaries
+npm run test:desktop  # the desktop shell's key handling (needs Electron, so it's separate)
 ```
 
 On Windows you can also just double-click **`Start MechApe.cmd`** to open the app.

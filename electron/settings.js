@@ -6,6 +6,8 @@
  *   modelsDir — where downloaded .gguf files live (absent = default)
  *   dataDir   — where projects & chats are stored  (absent = default)
  *   skillsDir — where skills are scanned from       (absent = default)
+ *   openrouterKey — the OpenRouter API key, OS-encrypted (see below)
+ *   openrouterKeyLost — a saved key was found undecryptable and cleared
  *   llamacppVariant — 'cuda' | 'cpu' | 'auto', remembered after the first
  *     successful (or failed) launch so MechApe doesn't re-probe every boot
  *     (see electron/llamacpp.js)
@@ -105,20 +107,62 @@ function fsRootsEnvValue() {
  * forked local server as an env var — never to the renderer. */
 function setOpenRouterKey(key) {
   const k = (key || '').trim();
-  if (!k) return saveSettings({ openrouterKey: undefined });
+  // a freshly entered key also settles whatever went wrong with the last one
+  if (!k) return saveSettings({ openrouterKey: undefined, openrouterKeyLost: undefined });
   if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption unavailable — key not saved');
-  return saveSettings({ openrouterKey: safeStorage.encryptString(k).toString('base64') });
+  return saveSettings({
+    openrouterKey: safeStorage.encryptString(k).toString('base64'),
+    openrouterKeyLost: undefined,
+  });
 }
 
-function openrouterKey() {
-  if (env('OPENROUTER_KEY') !== undefined) return env('OPENROUTER_KEY');
+/* Where the key came from, resolved in one pass so callers can tell the two
+ * empty answers apart:
+ *
+ *   'env'        MECHAPE_OPENROUTER_KEY is set (wins over anything saved)
+ *   'settings'   saved here, and it decrypts
+ *   'none'       nothing saved — fully local, which is the design
+ *   'unreadable' a key IS saved, but this install cannot decrypt it
+ *
+ * That last state is not hypothetical. safeStorage on Windows is not raw
+ * DPAPI: it encrypts with an AES key kept in the app's own "Local State"
+ * file, so a settings.json copied between two apps — exactly what the rename
+ * migration in main.js does — carries ciphertext whose key stayed behind in
+ * the old app's folder. Reporting that as "no key" is how a configured
+ * install came up fully local with nothing anywhere to explain why. */
+function resolveOpenRouterKey() {
+  if (env('OPENROUTER_KEY') !== undefined) return { key: env('OPENROUTER_KEY'), source: 'env' };
   const enc = loadSettings().openrouterKey;
-  if (!enc) return '';
-  try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); }
-  catch { return ''; } // settings copied from another machine/user — undecryptable
+  if (!enc) return { key: '', source: 'none' };
+  try { return { key: safeStorage.decryptString(Buffer.from(enc, 'base64')), source: 'settings' }; }
+  catch { return { key: '', source: 'unreadable' }; }
 }
 
+const openrouterKey = () => resolveOpenRouterKey().key;
+const openrouterKeyState = () => resolveOpenRouterKey().source;
 const openrouterConfigured = () => Boolean(openrouterKey());
+
+/**
+ * Boot-time check on the saved key: if one is there but cannot be decrypted,
+ * drop it and remember that it happened, so Preferences can say "the saved
+ * key could not be read — enter it again" instead of "no key".
+ *
+ * Only ever acts on a positive verdict — OS encryption working AND the blob
+ * refusing to decrypt. When safeStorage itself is unavailable the key is left
+ * exactly where it is: that failure says nothing about the blob, and acting
+ * on it would throw away a perfectly good key.
+ */
+function auditOpenRouterKey() {
+  if (!loadSettings().openrouterKey) return false;
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  if (resolveOpenRouterKey().source !== 'unreadable') return false;
+  console.warn('[mechape] the saved OpenRouter key was encrypted by a previous install and cannot be decrypted here — clearing it; re-enter the key in Preferences');
+  saveSettings({ openrouterKey: undefined, openrouterKeyLost: true });
+  return true;
+}
+
+/** True once a saved key has been found undecryptable and cleared. */
+const openrouterKeyLost = () => Boolean(loadSettings().openrouterKeyLost);
 
 /* Remote privacy routing: 'deny' (default) = only providers that don't log or
  * train on prompts; 'allow' widens provider choice. Ambient env wins. */
@@ -153,4 +197,5 @@ module.exports = {
   loadSettings, saveSettings, defaultStorage, effectiveStorage, storageEnv, logDir,
   fsRootsList, fsWholeDisk,
   setOpenRouterKey, openrouterConfigured, orDataCollection,
+  openrouterKeyState, auditOpenRouterKey, openrouterKeyLost,
 };

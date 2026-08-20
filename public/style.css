@@ -1028,6 +1028,14 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: var(-
   background: var(--field); white-space: nowrap; overflow-x: auto;
 }
 .prefs-path::before { content: '> '; color: var(--gold); }
+/* a readout reporting something the user needs to act on (e.g. a saved API
+   key an app update left unreadable) — same box, alarmed */
+.prefs-path.prefs-warn {
+  color: var(--gold-bright); border-color: var(--line);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--gold) 35%, transparent);
+  white-space: normal; font-size: 13px;
+}
+.prefs-path.prefs-warn::before { content: '! '; color: var(--red-bright); }
 .prefs-actions { display: flex; gap: 10px; }
 .prefs-actions button[disabled] { opacity: .4; pointer-events: none; }
 .prefs-note { font-size: 11.5px; color: var(--bone-dim); line-height: 1.5; }

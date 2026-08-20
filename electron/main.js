@@ -32,6 +32,7 @@ const fs = require('fs');
 const runtime = require('./runtime');
 const { ensureLlamaCppBinary } = require('./llamacpp');
 const { findFreePort, waitForServer, startServer, killTrackedLlamaProcesses } = require('./server');
+const { auditOpenRouterKey } = require('./settings');
 const { buildMenu } = require('./menu');
 const { registerPrefsIpc } = require('./prefs-ipc');
 
@@ -47,8 +48,15 @@ const LEGACY_APP_NAMES = ['Monkii', 'CodeMonkii'];
  * One-time data migration across the app's renames (CodeMonkii → Monkii →
  * MechApe). On first launch under a new name, copy the previous install's
  * projects, skills, settings, logs, and downloaded runtime across so nothing
- * is orphaned — including the OpenRouter key, which is OS-encrypted to this
- * user and stays decryptable because it's the same machine.
+ * is orphaned.
+ *
+ * The one thing that cannot survive the copy is the OpenRouter key. Being on
+ * the same machine as the same user is not enough: safeStorage encrypts with
+ * an AES key kept in the *old* app's "Local State" file, which stays behind,
+ * so the copied ciphertext is undecryptable here. auditOpenRouterKey (see
+ * settings.js) notices that on the next boot, clears the dead blob, and
+ * leaves Preferences a note to ask for the key again — rather than the app
+ * quietly presenting itself as fully local.
  *
  * Takes the newest legacy folder that actually exists, copies file-by-file,
  * never overwrites anything the new install already has, and only writes the
@@ -179,6 +187,7 @@ function reportSetupProgress(p) {
 
 async function boot() {
   migrateLegacyData(); // carry data over from an install under a previous name
+  auditOpenRouterKey(); // ...but not the API key, which a rename leaves undecryptable
   buildMenu();
   createWindow();
 

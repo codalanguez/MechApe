@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "eslint . && node scripts/test-openrouter.js && node scripts/test-llamacpp.js && node scripts/test-mcp.js && node scripts/test-memory.js",
+    "test:desktop": "electron scripts/test-desktop-settings.js",
     "desktop": "electron .",
     "bench": "node scripts/benchmark.js",
     "runtime": "node scripts/fetch-runtime.js",

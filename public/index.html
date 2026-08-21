@@ -17,7 +17,9 @@
     <header id="brand">
       <img class="brand-mark" src="icon.png" alt="MechApe">
       <div>
-        <h1>Mon<span>kii</span></h1>
+        <!-- two-tone by design (#brand h1 span): the second half is bone
+             against the gold. Split on the seam in the name itself. -->
+        <h1>Mech<span>Ape</span></h1>
         <div id="local-status" class="status status-unknown"><i></i><span>checking local models…</span></div>
       </div>
     </header>
@@ -60,7 +62,12 @@
     <div id="welcome" class="welcome">
       <img class="welcome-ember" src="icon.png" alt="">
       <h2>Your models. Your machine. Your mischief.</h2>
-      <p>Create a project, attach files from your machine, switch on skills, and talk to your own local models — nothing ever leaves this computer.</p>
+      <!-- The unqualified "nothing ever leaves this computer" was the one
+           screen making a promise the rest of the app is careful about: the
+           same product pulls models from Hugging Face and can send a whole
+           chat to OpenRouter when you pick a remote model. Local by default
+           is the true claim, and it is the one worth making. -->
+      <p>Create a project, attach files from your machine, switch on skills, and talk to your own local models — local by default, and nothing leaves this computer unless you ask it to.</p>
       <button id="btn-welcome-project" class="btn btn-primary">Create your first project</button>
       <button id="btn-welcome-quick" class="btn btn-ghost">or start a quick chat</button>
       <div id="welcome-hint" class="welcome-hint" hidden></div>
@@ -255,7 +262,8 @@
       </header>
       <div class="of-body">
         <p id="of-msg"></p>
-        <button id="btn-of-increase" class="btn btn-primary">Increase context length <em>may slow responses</em></button>
+        <button id="btn-of-increase" class="btn btn-primary">Increase context length <em id="of-increase-note">may slow responses</em></button>
+        <p id="of-ctx-warn" class="of-warn" hidden></p>
         <button id="btn-of-newchat" class="btn btn-ghost">Start a new chat</button>
         <button id="btn-of-send" class="btn btn-ghost">Send anyway <em>the model will drop the oldest text</em></button>
       </div>
@@ -491,6 +499,26 @@
         </details>
 
         <details class="field">
+          <summary><span>Memory <em>durable facts carried between chats</em></span></summary>
+          <div id="prefs-memory-summary" class="prefs-path"></div>
+          <ul id="prefs-memory-list" class="prefs-fs-list"></ul>
+          <div class="prefs-actions">
+            <button id="btn-prefs-memory-forget-all" class="btn btn-danger-ghost">Forget everything</button>
+          </div>
+          <div class="prefs-note">After a reply from a <b>local</b> model, MechApe distils anything durable you said about yourself into a one-line fact, and puts the most relevant few into later prompts so you don't have to repeat yourself. Chats with <b>remote</b> models are skipped entirely — nothing here is ever sent off this machine, and nothing from a remote chat is ever recorded. Delete any fact, or all of them, at any time. Set <b>MECHAPE_MEMORY=off</b> to stop recording altogether.</div>
+        </details>
+
+        <details class="field">
+          <summary><span>Integrations <em>MCP servers that give models tools</em></span></summary>
+          <div id="prefs-mcp-summary" class="prefs-path"></div>
+          <ul id="prefs-mcp-list" class="prefs-fs-list"></ul>
+          <div class="prefs-actions">
+            <button id="btn-prefs-mcp-reload" class="btn btn-ghost">Reconnect</button>
+          </div>
+          <div class="prefs-note">MechApe ships no servers and installs none — this is empty until you write <b>mcp.json</b> yourself, in Claude Desktop's format. <b>An MCP server is a program you choose to run, and it can do anything that program does, including reach the network.</b> Connecting one steps outside the local-only promise knowingly. Servers are started with a minimal environment: your OpenRouter key and storage paths are <b>not</b> passed to them.</div>
+        </details>
+
+        <details class="field">
           <summary><span>Data &amp; backup <em>export a backup, or erase everything</em></span></summary>
           <div id="prefs-data-summary" class="prefs-path"></div>
           <div class="prefs-actions">
@@ -498,7 +526,7 @@
             <button id="btn-prefs-open-data" class="btn btn-ghost prefs-desktop">Open data folder</button>
             <button id="btn-prefs-wipe" class="btn btn-danger-ghost">Erase everything…</button>
           </div>
-          <div class="prefs-note">Backup zips your projects &amp; chats to a folder you choose — cached embeddings aren't included, they rebuild automatically. Erasing removes every project, chat, and cached embedding; skills and these preferences are untouched. Neither can be undone once done — back up first if you want to keep anything.</div>
+          <div class="prefs-note">Backup zips your projects &amp; chats to a folder you choose — cached embeddings aren't included, they rebuild automatically. Erasing removes every project, chat, cached embedding, and remembered fact; skills, downloaded models, and these preferences are untouched. Neither can be undone once done — back up first if you want to keep anything.</div>
         </details>
       </div>
     </div>

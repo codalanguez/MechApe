@@ -13,7 +13,15 @@ const path = require('path');
 const os = require('os');
 const express = require('express');
 const { FS_ROOTS, PREVIEW_MAX_BYTES, WRITE_MAX_BYTES } = require('../lib/config');
-const { pathAllowed, SAFE_FILENAME } = require('../lib/security');
+const { pathAllowed, isNetworkPath, SAFE_FILENAME } = require('../lib/security');
+
+/* Why these two routes say something different from the other five: they are
+ * the only ones a user reaches with a path they typed or pasted, so "outside
+ * MECHAPE_FS_ROOTS" would be a lie for a rejected \\server\share — it isn't
+ * outside the allowlist, it is a kind of path this app won't touch at all
+ * (see isNetworkPath). Naming the workaround costs one sentence. */
+const NETWORK_PATH_MESSAGE =
+  'Network locations (\\\\server\\share) aren\'t supported — map the share to a drive letter and browse that instead.';
 
 const router = express.Router();
 
@@ -47,13 +55,19 @@ function listDrives() {
 
 router.get('/fs', (req, res) => {
   const fallback = FS_ROOTS.length ? FS_ROOTS[0] : os.homedir();
-  const dir = req.query.dir || fallback;
+  // ?dir[a]=b parses to an object, which used to reach path.dirname inside
+  // realpathish and throw where nothing catches it — a 500 and a logged
+  // stack for a malformed query string. /fs/read below already did this.
+  const dir = typeof req.query.dir === 'string' && req.query.dir ? req.query.dir : fallback;
   if (dir === '__drives__') {
     // with an allowlist configured, "Drives" shows the allowed roots instead
     const tops = FS_ROOTS.length ? FS_ROOTS : listDrives();
     return res.json({ dir: '__drives__', entries: tops.map(d => ({ name: d, path: d, isDir: true })) });
   }
-  if (!pathAllowed(dir)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
+  if (!pathAllowed(dir)) {
+    return res.status(403).json({
+      error: isNetworkPath(dir) ? NETWORK_PATH_MESSAGE : 'path outside MECHAPE_FS_ROOTS' });
+  }
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true })
       .filter(e => !e.name.startsWith('$') && e.name !== 'System Volume Information')
@@ -71,7 +85,10 @@ router.get('/fs', (req, res) => {
 router.get('/fs/read', (req, res) => {
   const target = typeof req.query.path === 'string' ? req.query.path : '';
   if (!target) return res.status(400).json({ error: 'path required' });
-  if (!pathAllowed(target)) return res.status(403).json({ error: 'path outside MECHAPE_FS_ROOTS' });
+  if (!pathAllowed(target)) {
+    return res.status(403).json({
+      error: isNetworkPath(target) ? NETWORK_PATH_MESSAGE : 'path outside MECHAPE_FS_ROOTS' });
+  }
   let stat;
   try { stat = fs.statSync(target); }
   catch { return res.status(404).json({ error: 'file not found' }); }

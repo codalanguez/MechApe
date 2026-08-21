@@ -16,6 +16,8 @@ export const state = {
   invokedSkills: [],     // skill ids invoked via "/" for the next message
   streaming: false,      // a reply is currently streaming
   abort: null,           // AbortController for the in-flight stream
+  streamChatId: null,    // which chat that stream belongs to (it may not be the open one)
+  streamBubble: null,    // its live bubble, so openChat can re-attach it on return
   fbDir: null,           // file browser's current directory
   baseTokens: null,      // est. tokens of the fixed request part (system + history)
   systemTokens: 0,       // est. tokens of the system prompt alone (the overflow floor)

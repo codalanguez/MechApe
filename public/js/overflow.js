@@ -25,6 +25,27 @@ export function openOverflowDialog(text) {
   overflowText = text;
   $('#of-msg').textContent =
     `This request needs more room than the context length (${fmtCtx(state.contextLimit)} tokens) allows, and it can't be trimmed by dropping older messages — the project's instructions and attached files alone fill it. Choose how to proceed:`;
+
+  /* Say what "increase" would actually set, and carry over the VRAM warning
+   * from Model settings.
+   *
+   * Without both, this button was a closed loop: it silently jumped num_ctx to
+   * the next power of two that fits — up to 256k — the next send ran out of
+   * VRAM loading the KV cache, and the error told the user to *lower* the
+   * context length they had just been invited to raise, with nothing
+   * connecting the two moments. The same numbers already carry a warning in
+   * Model settings; the dialog that recommends them should not be the one
+   * place it is missing. */
+  const ctx = neededContext(overflowText);
+  $('#of-increase-note').textContent = `to ${fmtCtx(ctx)} · may slow responses`;
+  const warn = $('#of-ctx-warn');
+  warn.hidden = ctx < 65536;
+  if (!warn.hidden) {
+    warn.textContent = ctx >= 131072
+      ? `⚠ ${fmtCtx(ctx)} needs many GB of VRAM for the KV cache — on most GPUs the model will fail to load or crash. Consider "Send anyway", or attaching less.`
+      : `⚠ ${fmtCtx(ctx)} is memory-hungry and can exceed a typical GPU, making the model fail to load. With on-device retrieval, large attachments don't need a big context.`;
+  }
+
   modal.open();
 }
 
@@ -40,7 +61,9 @@ export function initOverflowDialog(send, newChat) {
     state.contextLimit = ctx;
     await api(`/api/projects/${state.project.id}`, { method: 'PUT', body: { options: state.project.options } });
     modal.close();
-    toast(`Context raised to ${fmtCtx(ctx)} for this project`);
+    // name the scope: this is a project-wide setting, not a one-off for this
+    // message, and every other chat in the project inherits it
+    toast(`Context raised to ${fmtCtx(ctx)} for every chat in this project`);
     sendFn(true);
   });
 

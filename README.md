@@ -10,7 +10,7 @@
 
 > Early days: releases are unsigned until the [SignPath Foundation](https://signpath.org/) application clears, so Windows SmartScreen will warn on first launch. Verify the download against the `SHA256SUMS.txt` published with each release.
 
-A local, private LLM studio on its own [llama.cpp](https://github.com/ggml-org/llama.cpp) backend — projects, Claude-style skills, and live file knowledge. No separate Ollama install and nothing to fetch on first launch: the `llama-server` runtime ships inside the installer, SHA256-verified at build time, and runs your models — plain `.gguf` files you pull straight from Hugging Face — directly. Local by default: out of the box, nothing ever leaves your machine except a model you asked for. When your hardware can't carry the model you need, an **optional** [OpenRouter](https://openrouter.ai) key adds remote models — per chat, clearly badged, never implicit.
+A local, private LLM studio on its own [llama.cpp](https://github.com/ggml-org/llama.cpp) backend — projects, Claude-style skills, and live file knowledge. No separate Ollama install, and for most machines nothing to fetch on first launch: the `llama-server` runtime ships inside the installer, SHA256-verified at build time (an NVIDIA card is the exception — CUDA is a separate ~250 MB download on first run, and the splash reports its progress), and runs your models — plain `.gguf` files you pull straight from Hugging Face — directly. Local by default: out of the box, nothing ever leaves your machine except a model you asked for. When your hardware can't carry the model you need, an **optional** [OpenRouter](https://openrouter.ai) key adds remote models — per chat, clearly badged, never implicit.
 
 **Website:** [codalanguez.com/mechape](https://codalanguez.com/mechape/) · more experiments in [The Lab](https://codalanguez.com/lab/)
 
@@ -275,8 +275,8 @@ After a reply, MechApe asks the local model whether the exchange contained anyth
 What keeps this a notebook rather than surveillance:
 
 - **It never leaves the machine.** Extraction runs on your local model; remote chats are skipped entirely. Sending a conversation to a provider purely to build a profile is the trade this app exists to refuse.
-- **You can read it.** `GET /api/memory` returns every fact verbatim, in plain sentences — not embeddings you can't audit.
-- **You can delete it**, one fact or all of them, and deletion is real.
+- **You can read it.** **Preferences → Memory** lists every fact verbatim, in plain sentences — not embeddings you can't audit. (`GET /api/memory` returns the same thing if you'd rather read it with `curl`.)
+- **You can delete it**, one fact or all of them, from that same panel, and deletion is real. "Erase everything" under Data & backup clears it too — it is stored beside your projects, not inside them, and it took a bug report to notice the wipe had been walking past it.
 - **It's bounded and dated** — 200 facts, oldest aged out — so it can't quietly grow forever.
 - **It's framed as background.** A memory that contradicts what you say now loses to you.
 - **`MECHAPE_MEMORY=off` genuinely turns it off** — nothing extracted, nothing injected, and the model isn't called. There's a test asserting exactly that, because a privacy switch that doesn't switch anything is worse than none.
@@ -304,7 +304,7 @@ Then reload: `POST /api/integrations/reload`, or restart the app. `GET /api/inte
 
 MechApe adds one key to the format: `"disabled": true` keeps a server defined but doesn't start it.
 
-> **This is the one place the local-only promise stops.** An MCP server is a program *you* choose to run, and it can do whatever that program does — including talk to the network. Nothing ships with MechApe, nothing installs itself, and nothing runs until you write that file. Every tool call is logged, and a reply that used one says which. Read a server before you connect it, exactly as you would any other executable.
+> **This is the one place the local-only promise stops.** An MCP server is a program *you* choose to run, and it can do whatever that program does — including talk to the network. Nothing ships with MechApe, nothing installs itself, and nothing runs until you write that file. Every tool call is logged, and a reply that used one says which — a line under the answer names the tools that ran, and it is saved with the message rather than only shown live. Servers are started with a deliberately small environment: your OpenRouter key, data directory, and file-access allowlist are **not** among the variables they inherit (`MECHAPE_MCP_INHERIT` passes named extras through if a server genuinely needs one). Connected and failed servers are listed in **Preferences → Integrations**. Read a server before you connect it, exactly as you would any other executable.
 
 Tools work with **both** backends — local models and remote OpenRouter ones. That's a deliberate difference from [memory](#memory), which is withheld from remote chats: memory is distilled from *other* conversations, while tool results belong to this one, and you already accepted that this conversation goes to the provider when you picked a remote model.
 
@@ -328,6 +328,7 @@ The remote path is verified end-to-end against `openai/gpt-4o-mini` (tool reques
 | `MECHAPE_RETRIEVAL` | `on` | Set to `off` to always include attachments whole (no embedding/retrieval) |
 | `MECHAPE_EMBED_MODEL` | *(auto-detect)* | Force a specific installed `.gguf` embedding model by filename; otherwise the first installed embed model is used |
 | `MECHAPE_EMBED_DIR` | *(beside data dir)* | Where the on-disk embedding indexes are stored |
+| `MECHAPE_MCP_INHERIT` | *(unset)* | Comma-separated environment variable names to pass through to MCP servers, which otherwise receive only a minimal allowlist (never your API key or storage paths). For a server that genuinely reads a token from the ambient environment. |
 | `MECHAPE_OPENROUTER_KEY` | *(unset)* | OpenRouter API key enabling optional remote models. In the desktop app, set it in Preferences → Remote models instead (stored OS-encrypted); the env var overrides that. Unset = fully local. |
 | `MECHAPE_OR_DATA_COLLECTION` | `deny` | Remote privacy routing: `deny` restricts remote chats to providers that don't log/train on prompts; `allow` widens provider choice. Toggle in Preferences → Remote models. |
 
@@ -341,7 +342,7 @@ MechApe is a single-user local app, hardened accordingly:
 - **No orphaned processes** — the chat and embed instances are MechApe's own, tracked by PID across the process boundary (a parent-initiated kill on Windows doesn't let a child clean up after itself — see `electron/server.js`) and force-killed on quit or restart.
 - **Loopback only** — the server binds `127.0.0.1`; it is never reachable from the network.
 - **DNS-rebinding protection** — requests with a `Host` header other than `localhost`/`127.0.0.1` are rejected, so a malicious website that points its own domain at your loopback address gets a 403.
-- **CSRF protection** — cross-origin requests (any `Origin` other than the app's own) are rejected.
+- **CSRF protection** — the `Host` header must name loopback on the app's own port, which is what defeats DNS rebinding; an `Origin` other than the app's own is rejected; and every request to `/api` carrying browser fetch metadata must be `same-origin` (or a user-initiated navigation). That last check is the one that matters for requests browsers send *without* an `Origin` — a plain `<img src="http://127.0.0.1:8113/api/…">` on any page you happen to visit — which the Origin check alone waved through. Requests with no fetch metadata at all (curl, the desktop shell's own menu queries) are still served: they cannot come from a web page, and a local process can forge any header anyway.
 - **Content Security Policy** — scripts run from the app's own origin only; no eval, no inline scripts, no third-party script sources. Plus `nosniff`, `no-referrer`, and a locked-down `Permissions-Policy`.
 - **Filesystem scoping** — the desktop app fences browsing, attachment reads, file preview, and "Save as file…" to your **home folder by default** (widen it in Preferences → File access: add folders or allow the whole disk). `MECHAPE_FS_ROOTS` overrides it; the check runs on every read and write, and resolves realpath so a symlink/junction can't escape the allowlist. A saved filename is validated as a single path segment (no `\`, `/`, or `..`) server-side regardless of what the client sends, and previews sniff for binary content and refuse to render it rather than sending raw bytes to the browser.
 - **Input validation** — project/skill ids are strictly validated (no path traversal), all model output is HTML-escaped before rendering, and errors return generic JSON with no stack traces.

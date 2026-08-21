@@ -9,7 +9,7 @@
  * if the user hit Stop mid-generation.
  */
 const express = require('express');
-const { HISTORY_LIMIT, DEFAULT_CONTEXT, EMBED_MODEL_DEFAULT, EMBED_MODEL_SIZE, CHAT_MODEL_DEFAULT, CHAT_MODEL_SIZE } = require('../lib/config');
+const { HISTORY_LIMIT, DEFAULT_CONTEXT, EMBED_MODEL_DEFAULT, EMBED_MODEL_SIZE, CHAT_MODEL_DEFAULT, CHAT_MODEL_SIZE, MCP_MAX_TOOL_ROUNDS } = require('../lib/config');
 const { loadProject, saveProject } = require('../lib/store');
 const { sanitizeOptions } = require('../lib/options');
 const { buildSystem } = require('../lib/prompt');
@@ -212,7 +212,7 @@ router.post('/context', async (req, res) => {
     // memory block, so counting one here would overstate the usage meter.
     const system = await buildSystem(project, skillIds, chat, lastUser ? lastUser.content : '',
       { includeMemory: !openrouter.isRemote(chat.model || '') });
-    const history = chat.messages.slice(-HISTORY_LIMIT).map(m => m.content).join('\n');
+    const history = chat.messages.filter(usableTurn).slice(-HISTORY_LIMIT).map(m => m.content).join('\n');
     const systemTokens = estimateTokens(system);
     const baseTokens = systemTokens + estimateTokens(history);
     const limit = await contextLimitFor(chat.model || '', project.options);
@@ -221,6 +221,34 @@ router.post('/context', async (req, res) => {
     res.json({ baseTokens, systemTokens, limit });
   } catch (e) { res.status(404).json({ error: String(e.message || e) }); }
 });
+
+/* A turn that failed is kept so its diagnostic survives a reload, but it is
+ * not something the model said: an empty assistant message wastes a slot at
+ * best, and some backends reject one outright. Filtered out of both history
+ * builders — before the slice, so the window still carries HISTORY_LIMIT real
+ * messages and the prompt is byte-identical to the one built back when
+ * errored turns were not persisted at all. */
+function usableTurn(m) { return !m.error; }
+
+/**
+ * Record an assistant turn, re-reading the project first in case another
+ * request touched it while this one was streaming.
+ *
+ * Extracted because the turns worth keeping are mostly the ones that never
+ * reach the streaming tail. An out-of-memory 502 or an overflow 413 returns
+ * long after the user's message was saved, so the chat kept a question with
+ * no answer and no explanation — and the text that said why lived only in
+ * logs/, behind a desktop menu item most people never open.
+ */
+function saveAssistant(projectId, chatId, fields) {
+  try {
+    const fresh = loadProject(projectId);
+    const freshChat = fresh.chats.find(c => c.id === chatId);
+    if (!freshChat) return;
+    freshChat.messages.push({ role: 'assistant', content: '', ts: Date.now(), ...fields });
+    saveProject(fresh);
+  } catch { /* project deleted mid-request */ }
+}
 
 router.post('/chat', async (req, res) => {
   const { projectId, chatId, message, model, skillIds = [], options = {} } = req.body;
@@ -253,7 +281,7 @@ router.post('/chat', async (req, res) => {
   const remote = openrouter.isRemote(model);
 
   const system = await buildSystem(project, skillIds, chat, message, { includeMemory: !remote });
-  const history = chat.messages.slice(-HISTORY_LIMIT).map(m => ({ role: m.role, content: m.content }));
+  const history = chat.messages.filter(usableTurn).slice(-HISTORY_LIMIT).map(m => ({ role: m.role, content: m.content }));
 
   // Compact to fit the context: drop the oldest history messages until the
   // estimated request fits the limit, always keeping the system prompt and the
@@ -273,10 +301,18 @@ router.post('/chat', async (req, res) => {
       : 'Raise the context length in Model settings, use a model with a larger context, or attach less.';
     return res.status(413).json({
       error: `This request needs about ${needK}k tokens but the model's context is ${fmtCtx(limit)}. ${advice}`,
-    });
+    });   // not saved: the overflow dialog offers to retry this same turn
   }
 
   let messages = [{ role: 'system', content: system }, ...history];
+
+  /* Send the failure AND leave it in the chat. Everything below this point
+   * has the user's turn already on disk, so a bare `return res.status(...)`
+   * is how a chat ended up holding a question with nothing after it. */
+  const failChat = (status, error) => {
+    saveAssistant(projectId, chatId, { error, model });
+    return res.status(status).json({ error });
+  };
 
   const ac = new AbortController();
   // fires when the client disconnects mid-stream (req 'close' fires too early in modern Node)
@@ -300,6 +336,14 @@ router.post('/chat', async (req, res) => {
    * Never fatal: resolveTools returns the original messages on any failure,
    * so a broken integration downgrades the turn to an ordinary chat. */
   let toolsUsed = [];
+  /* Things the user should know that `used` cannot carry: a server that would
+   * not start, a tool call that failed, a model that cannot call tools at all.
+   * resolveTools offers onEvent so a UI could narrate the wait live, and this
+   * route cannot use it that way — none of this has been sent yet, because an
+   * upstream failure below still has to become a real HTTP status. Collected
+   * and sent with the attribution line instead; "the model you picked can't
+   * call tools" is just as true after the fact as during. */
+  const toolNotes = [];
   try {
     const resolved = await tools.resolveTools({
       model,
@@ -307,6 +351,15 @@ router.post('/chat', async (req, res) => {
       options: clean,
       signal: ac.signal,
       chatWithTools: remote ? openrouter.chatWithTools : llamacpp.chatWithTools,
+      onEvent: (e) => {
+        if (e.type === 'tool_error') {
+          toolNotes.push(e.server ? `${e.server} failed to start` : `a tool call failed: ${e.error}`);
+        } else if (e.type === 'tool_unsupported') {
+          toolNotes.push(`${e.model} can't call tools — answered without them`);
+        } else if (e.type === 'tool_budget') {
+          toolNotes.push(`stopped after ${MCP_MAX_TOOL_ROUNDS} rounds of tool calls`);
+        }
+      },
     });
     messages = resolved.messages;
     toolsUsed = resolved.used;
@@ -322,7 +375,7 @@ router.post('/chat', async (req, res) => {
   } catch (e) {
     logError(`chat "${model}" — request failed`, e);
     if (remote) {
-      return res.status(502).json({ error: 'Cannot reach OpenRouter — check your internet connection.' });
+      return failChat(502, 'Cannot reach OpenRouter — check your internet connection.');
     }
     // Distinguish "the backend is down" from "the request failed while it was
     // up" — a dropped connection usually means the chat instance crashed,
@@ -332,12 +385,10 @@ router.post('/chat', async (req, res) => {
     if (reachable) {
       const n = clean.num_ctx;
       const ctxNote = n ? ` (context length is ${fmtCtx(n)})` : '';
-      return res.status(502).json({
-        error: `${model} failed to respond — the model likely ran out of memory or timed out loading${ctxNote}. ` +
-          `Lower the context length in Model settings, or pick a smaller model.`,
-      });
+      return failChat(502, `${model} failed to respond — the model likely ran out of memory or timed out loading${ctxNote}. ` +
+        `Lower the context length in Model settings, or pick a smaller model.`);
     }
-    return res.status(502).json({ error: 'Cannot reach the local model server. Is MechApe\'s llama.cpp backend running?' });
+    return failChat(502, 'Cannot reach the local model server. Is MechApe\'s llama.cpp backend running?');
   }
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '');
@@ -349,15 +400,15 @@ router.post('/chat', async (req, res) => {
     } catch { /* raw */ }
     logError(`chat "${model}" — ${remote ? 'OpenRouter' : 'llama.cpp'} ${upstream.status}`, detail);
     if (remote) {
-      return res.status(502).json({ error: openrouterErrorMessage(upstream.status, detail) });
+      return failChat(502, openrouterErrorMessage(upstream.status, detail));
     }
     // The instance can die during model load (KV cache won't fit the GPU),
     // surfacing as a 500 with raw socket/allocator text — replace it with a
     // clear cause.
     if (looksLikeRunnerCrash(detail)) {
-      return res.status(502).json({ error: runnerCrashMessage(model, clean.num_ctx) });
+      return failChat(502, runnerCrashMessage(model, clean.num_ctx));
     }
-    return res.status(upstream.status).json({ error: detail || `llama.cpp error ${upstream.status}` });
+    return failChat(upstream.status, detail || `llama.cpp error ${upstream.status}`);
   }
 
   res.setHeader('Content-Type', 'application/x-ndjson');
@@ -366,12 +417,20 @@ router.post('/chat', async (req, res) => {
   /* Tell the UI which tools ran before the answer starts arriving, so a
    * reply that leaned on an integration says so instead of appearing to
    * know things by magic. Same NDJSON channel as everything else; the
-   * frontend ignores fields it doesn't recognise. */
-  if (toolsUsed.length) res.write(`${JSON.stringify({ tools: toolsUsed })}\n`);
+   * frontend ignores fields it doesn't recognise.
+   *
+   * It ignored this one too, for as long as the line existed — chat.js read
+   * `error`, `message` and `usage` and dropped the rest — so the promise was
+   * true of the wire and false of the product. It is rendered now, and also
+   * persisted below, so it survives reopening the chat. */
+  if (toolsUsed.length || toolNotes.length) {
+    res.write(`${JSON.stringify({ tools: toolsUsed, toolNotes })}\n`);
+  }
 
   let acc = '';
   let accThink = '';
   let usage = null;
+  let streamError = null;
   try {
     await pipeNdjson(upstream, res, (obj) => {
       if (obj.message && obj.message.content) acc += obj.message.content;
@@ -380,8 +439,10 @@ router.post('/chat', async (req, res) => {
     });
   } catch (e) {
     // client aborting is normal (Stop button); anything else is worth logging
-    if (!ac.signal.aborted) logError(`chat "${model}" — stream error`, e);
+    if (!ac.signal.aborted) { streamError = e; logError(`chat "${model}" — stream error`, e); }
   }
+
+  const stopped = ac.signal.aborted;
 
   if (acc) {
     // reload in case another request touched the project while streaming
@@ -392,6 +453,12 @@ router.post('/chat', async (req, res) => {
         const msg = { role: 'assistant', content: acc, ts: Date.now(), model };
         if (accThink) msg.thinking = accThink;
         if (usage) msg.usage = usage;
+        if (toolsUsed.length) msg.tools = toolsUsed;
+        if (toolNotes.length) msg.toolNotes = toolNotes;
+        /* Without this a truncated answer is indistinguishable from a
+         * complete one after a reload: the partial text was always saved,
+         * only the "— stopped —" marker was not. */
+        if (stopped) msg.stopped = true;
         freshChat.messages.push(msg);
         saveProject(fresh);
       }
@@ -411,6 +478,15 @@ router.post('/chat', async (req, res) => {
         chatOnce: llamacpp.chatOnce,
       }).catch(() => { /* never surfaces to the chat */ });
     }
+  } else if (streamError) {
+    /* Nothing arrived and the stream broke. The client renders a ⚠ line for
+     * this, and that line used to vanish on reload — the one turn where the
+     * user most wants to re-read what went wrong.
+     *
+     * A turn the user aborted before any text arrived is deliberately not
+     * saved: that matches what happened before, and littering a chat with
+     * empty stopped markers helps nobody. */
+    saveAssistant(projectId, chatId, { error: String(streamError.message || streamError), model });
   }
   res.end();
 });

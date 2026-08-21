@@ -8,16 +8,25 @@
  * source data (see lib/retrieval.js).
  *
  * Wipe clears DATA_DIR and EMBED_DIR in place — every project/chat and every
- * cached embedding — leaving the folders themselves (so the app keeps
- * working right after) and leaving skills and storage-location settings
- * untouched entirely. It requires an exact confirmation phrase in the body
- * as a server-side backstop, not just a client-side dialog.
+ * cached embedding — plus the cross-chat memory file, leaving the folders
+ * themselves (so the app keeps working right after) and leaving skills and
+ * storage-location settings untouched entirely. It requires an exact
+ * confirmation phrase in the body as a server-side backstop, not just a
+ * client-side dialog.
+ *
+ * Memory needs naming separately because it is the one erasable thing that
+ * does not live in DATA_DIR: MEMORY_FILE sits one level above it
+ * (lib/config.js), so the *.json sweep below walked straight past it. Anyone
+ * typing the confirmation phrase to clear a machine kept the distilled facts
+ * about themselves — the most personal file the app writes — and those kept
+ * being injected into every later prompt.
  */
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const AdmZip = require('adm-zip');
 const { DATA_DIR, EMBED_DIR } = require('../lib/config');
+const memory = require('../lib/memory');
 const { pathAllowed, SAFE_FILENAME } = require('../lib/security');
 const { dropAll } = require('../lib/retrieval');
 
@@ -83,6 +92,11 @@ router.post('/wipe', (req, res) => {
   // right now would otherwise finish after the unlinks below and write its index
   // pair straight back to EMBED_DIR, silently resurrecting content this just erased.
   dropAll();
+  /* Memory first, and through the module's own clear() rather than an unlink:
+   * it is the deletion path lib/memory.js already exercises in its tests, and
+   * it leaves a valid empty store instead of a missing file. */
+  let facts = 0;
+  try { facts = memory.list().length; memory.clear(); } catch { /* never written */ }
   let projects = 0, embeddings = 0;
   try {
     for (const f of fs.readdirSync(DATA_DIR)) {
@@ -97,7 +111,7 @@ router.post('/wipe', (req, res) => {
       try { fs.unlinkSync(path.join(EMBED_DIR, f)); } catch { /* raced away */ }
     }
   } catch { /* no embed dir yet */ }
-  res.json({ ok: true, projects, embeddings });
+  res.json({ ok: true, projects, embeddings, facts });
 });
 
 module.exports = router;

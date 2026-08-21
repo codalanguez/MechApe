@@ -17,6 +17,7 @@ import { confirmDialog } from './confirm.js';
 import { openBrowser } from './filebrowser.js';
 import { state } from './state.js';
 import { showProjectsPage } from './projects.js';
+import { initMemory, loadMemory, initIntegrations, loadIntegrations } from './memory.js';
 
 const bridge = window.mechape;
 const WIPE_PHRASE = 'ERASE EVERYTHING';
@@ -182,10 +183,17 @@ export function initPrefs() {
   themeSel.value = savedTheme();
   themeSel.addEventListener('change', () => applyTheme(themeSel.value));
 
+  initMemory();
+  initIntegrations();
+
   $('#btn-prefs').addEventListener('click', async () => {
     themeSel.value = savedTheme();
     if (bridge) render(await bridge.getPrefs());
     loadDataSummary();
+    // both read from the local server, so they work in browser mode too —
+    // which is the mode with no other way to reach them
+    loadMemory();
+    loadIntegrations();
     modal.open();
   });
 
@@ -207,7 +215,8 @@ export function initPrefs() {
 
   $('#btn-prefs-wipe').addEventListener('click', async () => {
     const ok = await confirmDialog(
-      'Erase ALL projects, chats, and cached embeddings? Skills and these preferences are untouched. ' +
+      'Erase ALL projects, chats, remembered facts, and cached embeddings? ' +
+      'Skills and these preferences are untouched. ' +
       'This cannot be undone — back up first if you want to keep anything.',
       { confirmLabel: 'Erase everything', danger: true, requireText: WIPE_PHRASE });
     if (!ok) return;
@@ -219,7 +228,15 @@ export function initPrefs() {
       $('#inspector').hidden = true;
       await showProjectsPage();
       loadDataSummary();
-      toast(`Erased ${res.projects} project${res.projects === 1 ? '' : 's'} and ${res.embeddings} cached embedding${res.embeddings === 1 ? '' : 's'}`);
+      // name the memory count separately — it is the part nobody expects to
+      // be there, so silently folding it into a total would waste the moment
+      const bits = [
+        `${res.projects} project${res.projects === 1 ? '' : 's'}`,
+        `${res.embeddings} cached embedding${res.embeddings === 1 ? '' : 's'}`,
+      ];
+      if (res.facts) bits.push(`${res.facts} remembered fact${res.facts === 1 ? '' : 's'}`);
+      toast(`Erased ${bits.join(', ')}`);
+      loadMemory();
     } catch (e) { toast(e.message, true); }
   });
 

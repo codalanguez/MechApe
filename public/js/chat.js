@@ -58,6 +58,37 @@ function usageMeta(u) {
   return `<div class="msg-usage">${cost}${fmtTok(u.promptTokens)} in / ${fmtTok(u.completionTokens)} out</div>`;
 }
 
+/**
+ * Attribution line under a reply: which integrations ran, and anything that
+ * stopped one from running.
+ *
+ * The server has been writing a {"tools":[…]} line into the stream all along,
+ * with a comment saying it exists so a reply that leaned on an integration
+ * says so "instead of appearing to know things by magic" — and the NDJSON
+ * loop below simply never read it. So the guarantee was true of the wire and
+ * false of the product, in exactly the case that matters most: a remote chat
+ * where a filesystem tool has just sent local file contents to a provider,
+ * and the answer reads like ordinary model knowledge.
+ *
+ * Deliberately quiet — one dim line, the same weight as the token/cost line,
+ * left-aligned so it reads as provenance attached to the answer while cost
+ * stays a right-aligned meter.
+ */
+function toolsMeta(used, notes) {
+  const parts = [];
+  if (used && used.length) parts.push(`used ${used.map(t => t.name).join(', ')}`);
+  if (notes && notes.length) parts.push(...notes);
+  return parts.length ? `<div class="msg-tools">⚙ ${esc(parts.join(' · '))}</div>` : '';
+}
+
+/** The body of a stored assistant turn: an error, or an answer that may have
+ *  been cut short. Both shapes are persisted now, so both have to render the
+ *  same on reload as they did live. */
+function assistantBody(m) {
+  if (m.error) return `<p style="color:var(--blood)">⚠ ${esc(m.error)}</p>`;
+  return thinkingHtml(m.thinking) + md(m.content) + (m.stopped ? '<p><em>— stopped —</em></p>' : '');
+}
+
 /** Running OpenRouter spend for the open chat, shown in the header. */
 export function updateChatCost() {
   const el = $('#chat-cost');
@@ -72,6 +103,23 @@ function setStreaming(on) {
   state.streaming = on;
   $('#btn-send').hidden = on;
   $('#btn-stop').hidden = !on;
+  updateStopTitle();
+}
+
+/** Name the chat Stop would actually stop.
+ *
+ * The button is global but a stream belongs to one chat, so after switching
+ * away it offers to stop a reply that is not the one on screen. Saying which
+ * costs a tooltip and removes the ambiguity entirely. */
+function updateStopTitle() {
+  const btn = $('#btn-stop');
+  if (!btn || btn.hidden) return;
+  const streaming = state.streamChatId
+    && state.project
+    && state.project.chats.find(c => c.id === state.streamChatId);
+  btn.title = (streaming && state.streamChatId !== state.chatId)
+    ? `Stop the reply generating in "${streaming.title}"`
+    : 'Stop generating';
 }
 
 export function currentChat() {
@@ -106,6 +154,9 @@ export async function deleteChat(cid) {
 function chatToMarkdown(chat) {
   const lines = [`# ${chat.title}`, ''];
   for (const m of chat.messages) {
+    // a failed turn is kept in the chat so its diagnostic survives a reload,
+    // but it is not part of the conversation anyone wants to export
+    if (m.error) continue;
     lines.push(`### ${m.role === 'user' ? 'You' : (m.model || 'Model')}`, '', m.content, '');
   }
   return lines.join('\n').trim() + '\n';
@@ -199,6 +250,16 @@ export function openChat(cid) {
   updateRemoteBadge();
   renderChatList();
   renderMessages();
+  /* A reply still streaming into this chat was detached by renderMessages
+   * above — put the same node back. The closure in runExchange still holds
+   * `body`, which is still this node's child, so it simply carries on
+   * rendering where it left off. */
+  if (state.streamChatId === cid && state.streamBubble) {
+    const box = $('#messages');
+    box.appendChild(state.streamBubble);
+    box.scrollTop = box.scrollHeight;
+  }
+  updateStopTitle();
   renderChatAttachments();
   $('#inspector-tab').hidden = !$('#inspector').hidden; // tab shows when the panel is closed
   $('#input').focus();
@@ -214,7 +275,7 @@ export function renderMessages() {
   box.innerHTML = chat.messages.map((m, i) => m.role === 'user'
     ? `<div class="msg msg-user" data-idx="${i}"><div class="msg-role">You</div><div class="msg-body">${esc(m.content)}</div>${
         m.skillIds && m.skillIds.length ? `<div class="msg-skills">invoked: ${esc(skillNames(m.skillIds).join(', '))}</div>` : ''}</div>`
-    : `<div class="msg msg-assistant" data-idx="${i}"><div class="msg-role">${esc(m.model || 'Model')}</div><div class="msg-body">${thinkingHtml(m.thinking)}${md(m.content)}</div>${usageMeta(m.usage)}</div>`
+    : `<div class="msg msg-assistant" data-idx="${i}"><div class="msg-role">${esc(m.model || 'Model')}</div><div class="msg-body">${assistantBody(m)}</div>${toolsMeta(m.tools, m.toolNotes)}${usageMeta(m.usage)}</div>`
   ).join('');
   // retry lives on the conversation's final reply only
   const last = chat.messages[chat.messages.length - 1];
@@ -381,6 +442,18 @@ function addRetryButton(el) {
 /** One full exchange: push the user turn, stream the reply, persist locally. */
 async function runExchange(text, skillIds, model) {
   const chat = currentChat();
+  /* This exchange belongs to the chat it was started in, for its whole life.
+   * Everything below that touches the *view* is guarded on the open chat
+   * still being this one — switching away used to leave the stream writing
+   * into a bubble renderMessages() had already detached, then file the reply
+   * into this chat's array while the Stop button sat in the new chat with
+   * nothing to stop.
+   *
+   * Binding rather than aborting on switch, deliberately: the server persists
+   * the full reply regardless of what this client does, so reading something
+   * else while a long answer generates is a flow that already works. Aborting
+   * would turn a finished reply into a truncated one to fix a display bug. */
+  const cid = state.chatId;
   chat.messages.push({ role: 'user', content: text, skillIds });
   if (chat.title === 'New chat') { chat.title = text.slice(0, 60); $('#chat-title').textContent = chat.title; renderChatList(); }
   renderMessages();
@@ -396,9 +469,16 @@ async function runExchange(text, skillIds, model) {
 
   setStreaming(true);
   state.abort = new AbortController();
+  // so openChat can re-attach this bubble if the user comes back mid-stream
+  state.streamChatId = cid;
+  state.streamBubble = bubble;
 
   let acc = '';
   let accThink = '';
+  let toolsUsed = [];
+  let toolNotes = [];
+  let stopped = false;
+  let failure = null;
   let usage = null;
   try {
     const res = await fetch('/api/chat', {
@@ -414,6 +494,7 @@ async function runExchange(text, skillIds, model) {
     let lastRender = 0;
     for await (const obj of readNdjson(res)) {
       if (obj.error) throw new Error(obj.error);
+      if (obj.tools || obj.toolNotes) { toolsUsed = obj.tools || []; toolNotes = obj.toolNotes || []; }
       if (obj.message && obj.message.thinking) accThink += obj.message.thinking; // reasoning models
       if (obj.message && obj.message.content) acc += obj.message.content;
       if (obj.usage) usage = obj.usage;
@@ -427,12 +508,16 @@ async function runExchange(text, skillIds, model) {
       }
     }
     body.innerHTML = thinkingHtml(accThink) + (md(acc) || '<em>(empty response)</em>');
+    // before the usage line, so the live order matches the re-rendered one
+    bubble.insertAdjacentHTML('beforeend', toolsMeta(toolsUsed, toolNotes));
     if (usage) bubble.insertAdjacentHTML('beforeend', usageMeta(usage));
   } catch (e) {
     if (e.name === 'AbortError') {
+      stopped = true;
       body.innerHTML = thinkingHtml(accThink) + md(acc) + '<p><em>— stopped —</em></p>';
     } else {
-      body.innerHTML = `<p style="color:var(--blood)">⚠ ${esc(humanizeError(e.message, model))}</p>`;
+      failure = humanizeError(e.message, model);
+      body.innerHTML = `<p style="color:var(--blood)">⚠ ${esc(failure)}</p>`;
     }
   }
   box.scrollTop = box.scrollHeight;
@@ -440,9 +525,24 @@ async function runExchange(text, skillIds, model) {
   const doneMsg = { role: 'assistant', content: acc, model };
   if (accThink) doneMsg.thinking = accThink;
   if (usage) doneMsg.usage = usage;
-  chat.messages.push(doneMsg);
+  if (toolsUsed.length) doneMsg.tools = toolsUsed;
+  if (toolNotes.length) doneMsg.toolNotes = toolNotes;
+  /* Mirror what the server just persisted, so switching away and back shows
+   * the same thing as a reload does. The push is conditional now: an empty
+   * successful reply used to create a bubble in memory that the server never
+   * saved (its own guard is `if (acc)`), so it vanished on reload with no
+   * explanation. */
+  if (stopped && acc) doneMsg.stopped = true;
+  if (failure) doneMsg.error = failure;
+  if (acc || failure) chat.messages.push(doneMsg);
   chat.model = model;
   addRetryButton(bubble); // works after errors and Stop too — that's when you want it most
-  updateChatCost();
-  refreshContext(); // history grew — re-estimate the base
+  state.streamChatId = null;
+  state.streamBubble = null;
+  // the meter and the cost readout describe the chat on screen — only repaint
+  // them when that is still the chat this reply belongs to
+  if (state.chatId === cid) {
+    updateChatCost();
+    refreshContext(); // history grew — re-estimate the base
+  }
 }

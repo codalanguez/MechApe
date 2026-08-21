@@ -1040,7 +1040,14 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: var(-
 .prefs-actions button[disabled] { opacity: .4; pointer-events: none; }
 .prefs-note { font-size: 11.5px; color: var(--bone-dim); line-height: 1.5; }
 .prefs-note b { color: var(--gold-deep); }
-.prefs-fs-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.prefs-fs-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.prefs-fs-list li.empty { color: var(--bone-dim); font-family: var(--font-body); font-size: 11.5px; border-style: dashed; }
+/* a remembered fact is a sentence, not a path: let it wrap rather than
+   truncating the half that says what was remembered */
+.mem-text { flex: 1; white-space: normal; line-height: 1.45; }
+.mcp-state { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.mcp-state.on { color: var(--cyan); }
+.mcp-state.off { color: var(--red-bright); }
 .prefs-fs-list li {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--font-mono); font-size: 12.5px; color: var(--bone);
@@ -1115,6 +1122,20 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: var(-
 .msg-usage {
   margin-top: 6px; font-family: var(--font-mono); font-size: 10.5px;
   color: var(--bone-dim); text-align: right;
+}
+/* Which integrations answered this reply. Same weight as the usage meter, but
+   left-aligned: cost is a running total you scan down the right edge, while
+   this is provenance belonging to the answer itself. */
+/* The overflow dialog's own copy of the context warning from Model settings:
+   "increase the context" is the button most likely to be clicked here, and it
+   is also the one that can make the next send fail to load the model. */
+.of-warn {
+  margin: 2px 0 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--gold-bright);
+}
+.msg-tools {
+  margin-top: 6px; font-family: var(--font-mono); font-size: 10.5px;
+  color: var(--bone-dim); text-align: left;
 }
 .chat-cost {
   font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap;

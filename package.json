@@ -10,7 +10,7 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "test": "eslint . && node scripts/test-openrouter.js && node scripts/test-llamacpp.js && node scripts/test-mcp.js && node scripts/test-memory.js",
+    "test": "eslint . && node scripts/test-openrouter.js && node scripts/test-llamacpp.js && node scripts/test-mcp.js && node scripts/test-memory.js && node scripts/test-security.js && node scripts/test-skills.js && node scripts/test-http.js",
     "test:desktop": "electron scripts/test-desktop-settings.js",
     "desktop": "electron .",
     "bench": "node scripts/benchmark.js",

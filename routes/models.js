@@ -61,8 +61,15 @@ router.get('/health', async (req, res) => {
     const version = await llamacpp.getVersion();
     // accel is null in headless mode (we didn't launch it, so we'd be guessing)
     res.json({ ok: true, version, accel: llamacpp.currentAccel() });
-  } catch {
-    res.json({ ok: false });
+  } catch (e) {
+    /* Not-ready and not-working are different answers, and the pill used to
+     * give the same one for both. The desktop shell now starts this server
+     * before it has resolved a llama.cpp build and narrates progress down the
+     * IPC channel, so "still setting up" is a real state — and when there is
+     * no setup underway the failure text says what is actually wrong (a
+     * quarantined binary reads very differently from a backend that was never
+     * started). */
+    res.json({ ok: false, setup: llamacpp.setupState(), reason: String(e.message || e) });
   }
 });
 

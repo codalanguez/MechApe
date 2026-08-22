@@ -42,7 +42,11 @@ export async function checkHealth() {
       $('#welcome-hint').hidden = true;
       if (wasUp === false) await restoreModelList();
       wasUp = true;
-    } else throw new Error();
+    } else {
+      // reachable server, backend not ready — a state of its own now
+      wasUp = false;
+      renderNotReady(el, h);
+    }
   } catch {
     wasUp = false;
     el.className = 'status status-bad';
@@ -53,6 +57,31 @@ export async function checkHealth() {
       ? "MechApe's local model backend isn't reachable, so local models are unavailable — remote (OpenRouter) models still work."
       : "MechApe's local model backend isn't reachable. In the desktop app, restart MechApe; in a repo checkout, start the llama-server chat + embed instances yourself (see the README), then this light turns green.";
   }
+}
+
+/* The backend is resolved after the window opens now, so "not ready yet" is a
+ * normal early state rather than a fault. Reporting it as "offline" would be
+ * two lies at once: that something is wrong, and that nothing is happening. */
+function renderNotReady(el, h) {
+  const setup = h.setup;
+  const hint = $('#welcome-hint');
+  hint.hidden = false;
+
+  if (setup && !setup.failed) {
+    el.className = 'status status-unknown';
+    el.querySelector('span').textContent = setup.text || 'preparing local models…';
+    el.title = 'MechApe is setting up its local model runtime. Remote models, projects and skills work now.';
+    hint.textContent = `${setup.text || 'Setting up the local model runtime'} — you can keep working; remote models, projects and skills are unaffected.`;
+    return;
+  }
+
+  el.className = 'status status-bad';
+  el.querySelector('span').textContent = 'local models unavailable';
+  const why = (setup && setup.text) || h.reason || '';
+  el.title = why;
+  hint.textContent = why
+    ? `${why}. Remote (OpenRouter) models are unaffected.`
+    : "MechApe's local model backend isn't reachable — remote (OpenRouter) models are unaffected.";
 }
 
 /** Repopulate the picker after an offline stretch, putting the open chat's

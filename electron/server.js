@@ -112,4 +112,13 @@ async function restartServer(extraEnv) {
   runtime.win?.webContents.reload();
 }
 
-module.exports = { findFreePort, waitForServer, startServer, restartServer, killTrackedLlamaProcesses };
+/** Send a message down the fork's IPC channel. Used to hand over the resolved
+ *  llama.cpp build, and to narrate progress while it is still being resolved,
+ *  without restarting the server (which would reload the UI under the user). */
+function sendToServer(msg) {
+  try { runtime.serverProc?.send(msg); } catch { /* no channel, or it just died */ }
+}
+
+module.exports = {
+  findFreePort, waitForServer, startServer, restartServer, killTrackedLlamaProcesses, sendToServer,
+};

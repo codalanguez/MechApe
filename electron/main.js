@@ -31,7 +31,7 @@ const fs = require('fs');
 
 const runtime = require('./runtime');
 const { ensureLlamaCppBinary } = require('./llamacpp');
-const { findFreePort, waitForServer, startServer, killTrackedLlamaProcesses } = require('./server');
+const { findFreePort, waitForServer, startServer, killTrackedLlamaProcesses, sendToServer } = require('./server');
 const { auditOpenRouterKey } = require('./settings');
 const { buildMenu } = require('./menu');
 const { registerPrefsIpc } = require('./prefs-ipc');
@@ -172,14 +172,22 @@ const fmtMB = (n) => `${Math.round(n / 1048576)} MB`;
  * run for real. Writes into the splash's own `.sub` line; harmless no-op
  * once the real UI has loaded over it.
  */
+function setupText(p) {
+  if (p.status === 'downloading' && p.total) return `Downloading local model runtime — ${Math.round((p.completed / p.total) * 100)}% of ${fmtMB(p.total)}`;
+  if (p.status === 'downloading') return 'Downloading local model runtime…';
+  if (p.status === 'unpacking') return 'Unpacking local model runtime — this takes a minute';
+  return p.status.charAt(0).toUpperCase() + p.status.slice(1) + '…';
+}
+
 function reportSetupProgress(p) {
+  const text = setupText(p);
+  /* The app is already on screen by the time most of this arrives, so the
+   * status pill is where it belongs — the splash line is only still the right
+   * home for the brief moment before the server answers. */
+  sendToServer({ type: 'llamacpp:setup', state: { text, status: p.status } });
+
   const win = runtime.win;
   if (!win || win.isDestroyed()) return;
-  let text;
-  if (p.status === 'downloading' && p.total) text = `Downloading local model runtime — ${Math.round((p.completed / p.total) * 100)}% of ${fmtMB(p.total)}`;
-  else if (p.status === 'downloading') text = 'Downloading local model runtime…';
-  else if (p.status === 'unpacking') text = 'Unpacking local model runtime — this takes a minute';
-  else text = p.status.charAt(0).toUpperCase() + p.status.slice(1) + '…';
   win.webContents.executeJavaScript(
     `(() => { const el = document.querySelector('.sub'); if (el) el.textContent = ${JSON.stringify(text)}; })()`,
   ).catch(() => { /* splash already replaced by the app */ });
@@ -191,35 +199,33 @@ async function boot() {
   buildMenu();
   createWindow();
 
-  runtime.serverPort = await findFreePort(runtime.PREFERRED_PORT);
+  /* Ports first — three cheap loopback picks — then start the server and show
+   * the app. The llama.cpp build is resolved afterwards, in the background.
+   *
+   * It used to be the other way around, and the cost was the whole product:
+   * ensureLlamaCppBinary was awaited before the server was even forked, so
+   * every launch sat on a splash until the backend question was settled. On a
+   * first run that is a 250 MB CUDA download. On a machine whose antivirus has
+   * quarantined llama-server.exe it is a full re-extract, every single time.
+   * Measured on the author's machine: 102 seconds to reach a UI that needed
+   * none of it — projects, chats, skills, settings and remote models are all
+   * served without a local backend, and the one thing that does need it says
+   * so on its own. */
+  const [serverPort, chatPort, embedPort] = await Promise.all([
+    findFreePort(runtime.PREFERRED_PORT),
+    findFreePort(8114),
+    findFreePort(8115),
+  ]);
+  runtime.serverPort = serverPort;
 
-  // Resolve (downloading + SHA256-verifying on first run) the llama-server
-  // binary and pick two more free loopback ports for the chat/embed
-  // instances the forked server will spawn on demand — never block window
-  // creation on this; a download failure surfaces as "backend unreachable"
-  // in the UI (same as Ollama-not-running used to), not a hard crash.
-  try {
-    // three independent operations — the binary download/verify (the slow
-    // one, minutes on a first run: the Windows CUDA build is a 250 MB
-    // archive) doesn't need to wait on two cheap local port picks
-    const [backend, chatPort, embedPort] = await Promise.all([
-      ensureLlamaCppBinary(reportSetupProgress),
-      findFreePort(8114),
-      findFreePort(8115),
-    ]);
-    runtime.llamacppEnv = {
-      MECHAPE_LLAMACPP_BIN: backend.bin,
-      MECHAPE_LLAMACPP_VARIANT: backend.variant,
-      // e.g. "Vulkan1" — without this llama.cpp offloads to device 0, which
-      // on a laptop is usually the integrated GPU, not the discrete card
-      MECHAPE_LLAMACPP_DEVICE: backend.device ? backend.device.id : '',
-      MECHAPE_LLAMACPP_CHAT_URL: `http://127.0.0.1:${chatPort}`,
-      MECHAPE_LLAMACPP_EMBED_URL: `http://127.0.0.1:${embedPort}`,
-    };
-  } catch (e) {
-    dialog.showErrorBox('MechApe', `Could not set up the local model backend:\n\n${e.message}\n\nMechApe will still start, but local chat won't work until this is resolved (check your internet connection and try again).`);
-    runtime.llamacppEnv = {};
-  }
+  /* The instance URLs are known now and never change; only the binary arrives
+   * late. Kept in llamacppEnv as well as sent over IPC, because a Preferences
+   * change re-forks the server and the fresh process learns everything from
+   * its environment. */
+  runtime.llamacppEnv = {
+    MECHAPE_LLAMACPP_CHAT_URL: `http://127.0.0.1:${chatPort}`,
+    MECHAPE_LLAMACPP_EMBED_URL: `http://127.0.0.1:${embedPort}`,
+  };
   startServer(runtime.serverPort, runtime.llamacppEnv);
 
   try {
@@ -228,7 +234,52 @@ async function boot() {
     buildMenu(); // now with live projects & skills
   } catch (e) {
     dialog.showErrorBox('MechApe', `Could not reach the app server.\n\n${e.message}`);
-    app.quit();
+    return app.quit();
+  }
+
+  /* Claim the state before doing the work. Between the server answering and
+   * the first progress event there is a gap of a second or two, and without
+   * this the health endpoint reports the raw failure of a probe against a
+   * backend that was never started — the pill would read "local models
+   * unavailable — fetch failed" for a moment during a perfectly normal
+   * startup, which is both alarming and untrue. */
+  sendToServer({ type: 'llamacpp:setup', state: { text: 'Preparing the local model runtime…', status: 'starting' } });
+
+  resolveBackend();   // deliberately not awaited
+}
+
+/**
+ * Find (downloading and SHA256-verifying on a first run) the llama.cpp build,
+ * and hand it to the already-running server.
+ *
+ * Failure is reported through the status pill rather than a modal dialog: the
+ * app is on screen and working by now, and a modal over a usable window to say
+ * "local chat is unavailable" interrupts someone who may be perfectly happy
+ * using a remote model.
+ */
+async function resolveBackend() {
+  try {
+    const backend = await ensureLlamaCppBinary(reportSetupProgress);
+    runtime.llamacppEnv = {
+      ...runtime.llamacppEnv,
+      MECHAPE_LLAMACPP_BIN: backend.bin,
+      MECHAPE_LLAMACPP_VARIANT: backend.variant,
+      // e.g. "Vulkan1" — without this llama.cpp offloads to device 0, which
+      // on a laptop is usually the integrated GPU, not the discrete card
+      MECHAPE_LLAMACPP_DEVICE: backend.device ? backend.device.id : '',
+    };
+    sendToServer({
+      type: 'llamacpp:config',
+      bin: backend.bin,
+      variant: backend.variant,
+      device: backend.device ? backend.device.id : '',
+    });
+  } catch (e) {
+    console.warn(`[mechape] local model backend unavailable: ${e.message}`);
+    sendToServer({
+      type: 'llamacpp:setup',
+      state: { failed: true, text: `Local models unavailable — ${e.message}` },
+    });
   }
 }
 

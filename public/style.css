@@ -1142,6 +1142,33 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: var(-
   color: var(--gold-deep); cursor: help;
 }
 .or-search-row { display: flex; gap: 12px; align-items: center; }
+.or-sort-label {
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 11.5px; color: var(--bone-dim);
+}
+.or-sort-label select { font-size: 11.5px; }
+.or-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.or-chip {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 11.5px; color: var(--bone-dim);
+  border: 1px solid var(--line-soft); border-radius: 999px;
+  padding: 3px 10px; background: var(--item); user-select: none;
+}
+.or-chip:hover { border-color: var(--line); color: var(--bone); }
+.or-chip input { accent-color: var(--gold); cursor: pointer; margin: 0; }
+.or-chip:has(input:checked) { border-color: var(--gold); color: var(--gold); }
+.or-count { margin-left: auto; font-size: 11px; color: var(--bone-dim); font-family: var(--font-mono); }
+/* capability tags and score on a catalog row */
+.or-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
+.or-tag {
+  font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--teal); border: 1px solid var(--teal); border-radius: 2px; padding: 0 4px;
+}
+.or-tag.score { color: var(--gold-deep); border-color: var(--gold-deep); }
+.or-desc {
+  font-size: 11px; color: var(--bone-dim); line-height: 1.4; margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .or-search-row #or-search { flex: 1; min-width: 0; }
 .or-free-toggle {
   display: flex; align-items: center; gap: 6px; font-size: 12px;

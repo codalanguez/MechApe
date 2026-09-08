@@ -301,10 +301,30 @@
       </header>
       <div class="or-scroll">
         <div class="or-search-row">
-          <input id="or-search" type="text" placeholder="Search 300+ models — try: deepseek, qwen, claude, mistral…" autocomplete="off" spellcheck="false">
-          <label class="or-free-toggle"><input type="checkbox" id="or-free-only"> free only</label>
+          <input id="or-search" type="text" placeholder="Search 400+ models — try: deepseek, qwen, claude, mistral…" autocomplete="off" spellcheck="false">
+          <label class="or-sort-label">sort
+            <select id="or-sort">
+              <option value="name">name</option>
+              <option value="coding">coding score</option>
+              <option value="intelligence">intelligence score</option>
+              <option value="agentic">agentic score</option>
+              <option value="cheap">cheapest</option>
+              <option value="context">largest context</option>
+            </select>
+          </label>
         </div>
-        <div class="or-hint">★ a model to add it to your model picker. Prices are per million tokens. <span id="or-balance"></span></div>
+        <!-- Capability filters, every one of them a field OpenRouter actually
+             publishes. There is deliberately no "good at writing" or
+             "general" chip: no such field exists, and keyword-matching the
+             marketing blurb would be a guess wearing a filter's clothes. -->
+        <div class="or-chips">
+          <label class="or-chip"><input type="checkbox" id="or-free-only"> free</label>
+          <label class="or-chip"><input type="checkbox" id="or-vision"> vision</label>
+          <label class="or-chip"><input type="checkbox" id="or-tools"> tools</label>
+          <label class="or-chip"><input type="checkbox" id="or-reasoning"> reasoning</label>
+          <span id="or-count" class="or-count"></span>
+        </div>
+        <div class="or-hint">★ a model to add it to your model picker. Prices are per million tokens. Scores are Artificial Analysis indices, published for about half the catalog. <span id="or-balance"></span></div>
         <ul id="or-list"></ul>
       </div>
     </div>

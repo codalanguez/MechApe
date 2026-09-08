@@ -8,7 +8,7 @@
  * API. Exits non-zero on any failure.
  */
 const assert = require('assert');
-const { buildChatPayload, sseToNdjson, looksLikeNoToolSupport } = require('../lib/openrouter');
+const { buildChatPayload, sseToNdjson, looksLikeNoToolSupport, mapModel } = require('../lib/openrouter');
 
 /* Tests queue here and run sequentially at the bottom of the file, so the
  * output order matches the declaration order. */
@@ -16,6 +16,63 @@ const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 
 const sys = [{ role: 'system', content: 'You edit manuscripts.' }, { role: 'user', content: 'hi' }];
+
+/* ---- catalog mapping ----
+ * The browse dialog filters on these fields, so a rename upstream would
+ * silently empty a filter rather than break anything loudly. */
+
+const RAW = {
+  id: 'vendor/seer',
+  name: 'Seer',
+  context_length: 128000,
+  pricing: { prompt: '0.0000004', completion: '0.0000016' },
+  architecture: { input_modalities: ['text', 'image', 'file'], output_modalities: ['text'] },
+  supported_parameters: ['tools', 'reasoning', 'temperature'],
+  benchmarks: { artificial_analysis: { intelligence_index: 52.8, coding_index: 76.9, agentic_index: 51.5 } },
+  description: 'A model.',
+};
+
+test('capabilities are read from the API, not guessed from the name', () => {
+  const m = mapModel(RAW);
+  assert.strictEqual(m.vision, true);
+  assert.strictEqual(m.tools, true);
+  assert.strictEqual(m.reasoning, true);
+  assert.strictEqual(m.coding, 76.9);
+  assert.strictEqual(m.intelligence, 52.8);
+  assert.strictEqual(m.agentic, 51.5);
+  assert.strictEqual(m.promptPrice, 0.0000004);
+});
+
+test('a text-only model claims nothing it cannot do', () => {
+  const m = mapModel({ id: 'v/plain', architecture: { input_modalities: ['text'] }, supported_parameters: ['temperature'] });
+  assert.strictEqual(m.vision, false);
+  assert.strictEqual(m.tools, false);
+  assert.strictEqual(m.reasoning, false);
+});
+
+test('an unbenchmarked model is unrated, not zero', () => {
+  // Half the catalog carries no benchmarks. Zero would sort them below a
+  // genuinely bad model and read as a measured verdict.
+  const m = mapModel({ id: 'v/unrated' });
+  assert.strictEqual(m.coding, null);
+  assert.strictEqual(m.intelligence, null);
+  assert.strictEqual(m.agentic, null);
+});
+
+test('a malformed entry maps without throwing — the catalog is remote data', () => {
+  const m = mapModel({ id: 'v/odd', architecture: 'nonsense', supported_parameters: 'nope', benchmarks: 7, pricing: null });
+  assert.strictEqual(m.vision, false);
+  assert.strictEqual(m.tools, false);
+  assert.strictEqual(m.coding, null);
+  assert.strictEqual(m.name, 'v/odd');       // falls back to the id
+  assert.strictEqual(m.description, '');
+});
+
+test('a long description is clipped, so the catalog stays a catalog', () => {
+  const m = mapModel({ id: 'v/wordy', description: 'x'.repeat(500) });
+  assert.ok(m.description.length <= 220, `got ${m.description.length}`);
+  assert.ok(m.description.endsWith('…'));
+});
 
 test('privacy routing: data_collection deny is on by default', () => {
   const p = buildChatPayload({ model: 'openrouter:deepseek/deepseek-chat', messages: sys, options: {} });

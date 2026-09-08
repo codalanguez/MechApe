@@ -37,16 +37,77 @@ export async function refreshOrStatus() {
 /* ---- browse dialog ---- */
 
 
+/* Sorts the catalog offers. Favourites always float to the top regardless —
+ * they are the models this user already chose, and burying them under a
+ * ranking would make starring one feel like losing it.
+ *
+ * A model with no published score sorts last within its group rather than as
+ * a zero: about half the catalog carries no benchmarks, and treating
+ * "unmeasured" as "scored nothing" would quietly libel them. */
+const SORTS = {
+  name: (a, b) => a.id.localeCompare(b.id),
+  coding: (a, b) => byScoreDesc(a.coding, b.coding) || a.id.localeCompare(b.id),
+  intelligence: (a, b) => byScoreDesc(a.intelligence, b.intelligence) || a.id.localeCompare(b.id),
+  agentic: (a, b) => byScoreDesc(a.agentic, b.agentic) || a.id.localeCompare(b.id),
+  cheap: (a, b) => (a.promptPrice ?? Infinity) - (b.promptPrice ?? Infinity) || a.id.localeCompare(b.id),
+  context: (a, b) => (b.contextLength || 0) - (a.contextLength || 0) || a.id.localeCompare(b.id),
+};
+
+function byScoreDesc(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;          // unrated sinks, but only against a rated peer
+  if (b == null) return -1;
+  return b - a;
+}
+
+/* Which sorts rank on a published number — and so which ones owe the reader
+ * the number they are being ranked by. */
+const SCORE_KEYS = { coding: 'coding', intelligence: 'intelligence', agentic: 'agentic' };
+
+/** Capability tags for one row, plus the score the current sort is ranking on. */
+function rowTags(m, sortKey) {
+  const tags = [];
+  if (m.vision) tags.push('<span class="or-tag">vision</span>');
+  if (m.tools) tags.push('<span class="or-tag">tools</span>');
+  if (m.reasoning) tags.push('<span class="or-tag">reasoning</span>');
+  // Show the number being sorted on, so a ranked list explains its own order
+  // — and says "unrated" outright rather than leaving a gap that reads as a
+  // bad score.
+  if (SCORE_KEYS[sortKey]) {
+    const v = m[sortKey];
+    tags.push(`<span class="or-tag score">${SCORE_KEYS[sortKey]} ${v == null ? 'unrated' : Math.round(v)}</span>`);
+  }
+  return tags.length ? `<div class="or-tags">${tags.join('')}</div>` : '';
+}
+
 function renderList() {
   const q = $('#or-search').value.trim().toLowerCase();
   const freeOnly = $('#or-free-only').checked;
+  const needVision = $('#or-vision').checked;
+  const needTools = $('#or-tools').checked;
+  const needReasoning = $('#or-reasoning').checked;
+  const sortKey = $('#or-sort').value;
   const favs = orFavorites();
   const isFav = (id) => favs.some(f => f.id === id);
-  const rows = (state.orCatalog || [])
-    .filter(m => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+  const matched = (state.orCatalog || [])
+    .filter(m => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
+      || (m.description || '').toLowerCase().includes(q))
     .filter(m => !freeOnly || (m.promptPrice === 0 && m.completionPrice === 0))
-    .sort((a, b) => (isFav(b.id) - isFav(a.id)) || a.id.localeCompare(b.id))
+    .filter(m => !needVision || m.vision)
+    .filter(m => !needTools || m.tools)
+    .filter(m => !needReasoning || m.reasoning);
+
+  const order = SORTS[sortKey] || SORTS.name;
+  const rows = matched
+    .sort((a, b) => (isFav(b.id) - isFav(a.id)) || order(a, b))
     .slice(0, 250);
+
+  // The list is capped, so say what the cap is hiding rather than letting a
+  // filter look like it found nothing more.
+  const total = (state.orCatalog || []).length;
+  $('#or-count').textContent = matched.length === total
+    ? `${total} models`
+    : `${matched.length} of ${total}${matched.length > rows.length ? ` · showing ${rows.length}` : ''}`;
 
   $('#or-list').innerHTML = rows.length ? rows.map(m => `
     <li>
@@ -55,6 +116,8 @@ function renderList() {
       <div class="or-meta">
         <div class="or-name">${esc(m.name)}</div>
         <div class="or-id">${esc(m.id)}</div>
+        ${rowTags(m, sortKey)}
+        ${m.description ? `<div class="or-desc">${esc(m.description)}</div>` : ''}
       </div>
       <div class="or-specs">${fmtCtx(m.contextLength, '—')} ctx · ${fmtPerM(m.promptPrice)} in / ${fmtPerM(m.completionPrice)} out <span class="or-perm">per M tokens</span></div>
     </li>`).join('')
@@ -107,5 +170,7 @@ export function initOpenRouter() {
   initModal('#or-backdrop', '#btn-close-or');
   $('#btn-or-browse').addEventListener('click', () => { $('#or-backdrop').hidden = false; $('#or-search').focus(); loadCatalog(); });
   $('#or-search').addEventListener('input', renderList);
-  $('#or-free-only').addEventListener('change', renderList);
+  for (const id of ['#or-free-only', '#or-vision', '#or-tools', '#or-reasoning', '#or-sort']) {
+    $(id).addEventListener('change', renderList);
+  }
 }
